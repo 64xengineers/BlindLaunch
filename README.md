@@ -15,7 +15,7 @@ their deposits and the team can reclaim unsold tokens.
 > Solana devnet with test tokens only. Do not use real funds or mainnet
 > until the program, circuit, settlement flow, and integrations have
 > been independently reviewed. Arcium and Meteora APIs change; verify
-> the current official docs and example versions before implementation.
+> the current official docs and example versions before implementation
 
 ## Contents
 
