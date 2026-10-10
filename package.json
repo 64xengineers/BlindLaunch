@@ -1,0 +1,9 @@
+{
+  "name": "blindlaunch",
+  "private": true,
+  "description": "Private, uniform-price token launches on Solana.",
+  "packageManager": "pnpm@10.18.0",
+  "engines": {
+    "node": ">=22"
+  }
+}
