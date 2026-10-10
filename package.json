@@ -1,8 +1,12 @@
 {
   "name": "blindlaunch",
   "private": true,
-  "description": "Private, uniform-price token launches on Solana.",
+  "description": "Uniform-price token launches on Monad.",
   "packageManager": "pnpm@10.18.0",
+  "scripts": {
+    "dev": "pnpm --filter @blindlaunch/web dev",
+    "build": "pnpm --filter @blindlaunch/web build"
+  },
   "engines": {
     "node": ">=22"
   }
