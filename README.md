@@ -1,5 +1,6 @@
 # Blindlaunch
 
+
 **Uniform-price token launches on Monad.**
 
 Blindlaunch is a sealed-bid token launch for the [Metropolis](https://monad.xyz/developers/hackathons/metropolis) hackathon. A team escrows a fixed token supply. During a commit window, bidders escrow a fixed quote-token deposit and submit a hash of their price and quantity. After that window they reveal. The contract computes one clearing price, winners pay that price, and unused deposits are refunded. If the auction is not settled before the timeout, bidders take their deposits back and the team takes the unsold tokens back.
@@ -8,8 +9,106 @@ Blindlaunch is a sealed-bid token launch for the [Metropolis](https://monad.xyz/
 
 The commit hash hides price and quantity until that bidder reveals. Wallet addresses, deposits, revealed bids, the clearing price, and token transfers are public. Submit this build to the **Onchain Finance & Trading** track.
 
+## Continue from here
+
+Read this section first if you are resuming the build. Update the matching step below when you finish it, including the command you ran and the result. Do not put private keys, seed phrases, or `.env` contents in this file.
+
+Deadline: **13 Oct 2026, 11:59 PM ET**. Track: **Onchain Finance & Trading**. Chain: Monad testnet, id `10143`, RPC `https://testnet-rpc.monad.xyz`. Test tokens only. Do not deploy to Monad mainnet.
+
+Contract sources are in `contracts/` on branch `added-readme.md`. Never commit `.env`, `contracts/broadcast/`, `contracts/cache/`, or `contracts/lib/`. A fresh checkout needs `forge install foundry-rs/forge-std` inside `contracts/`.
+
+Toolchain already installed on this machine: Foundry `1.8.5` (`forge`, `cast`), `forge-std` `v1.17.0` in `contracts/lib/` (gitignored), Solidity `0.8.28`. A fresh checkout still needs `forge install foundry-rs/forge-std` inside `contracts/`.
+
+### Step 1 — Compile and test
+
+**Status: complete.** Confirmed 2026-10-10.
+
+```bash
+cd contracts
+forge test
+```
+
+Result: 16 passed, 0 failed. The reference clearing price is 60, partial sales and dust match `packages/auction-core`, the timeout refunds the deposit, and a fee-on-transfer token is rejected.
+
+Test fixes already in `contracts/test/BlindAuction.t.sol`:
+
+- Call `hashBid` before `vm.prank`. A prank applies only to the next call, so nesting `hashBid(...)` inside `commit(...)` sends the bid from the test contract.
+- The invalid-reveal case uses one shared deposit. A 400-token bid at price 100 is excluded. The valid bid is 10 tokens, which fits under that deposit.
+- After `settle`, `cancel` reverts with `NotOpen`. `TooEarly` applies only while the auction is still open and `cancelAfter` has not been reached.
+
+### Step 2 — Deploy to Monad testnet
+
+**Status: complete.** Confirmed 2026-10-10.
+
+Wallets were created locally and funded with 1 testnet MON each. Keys are only in `.env`.
+
+| Role | Address |
+| --- | --- |
+| Authority | `0x7622D42d449f23b7cfBf90CB403919274b58cDeB` |
+| Bidder | `0x9b039E0cCC184704348FBB0C4aC7eb2D9b45FaCD` |
+
+Deploy command, from `contracts/`, with `COMMIT_DELAY_SECONDS=180`, `REVEAL_DELAY_SECONDS=360`, and `CANCEL_DELAY_SECONDS=540`:
+
+```bash
+set -a && source ../.env && set +a
+forge script script/Demo.s.sol:Demo --rpc-url "$MONAD_RPC_URL" --chain 10143 --broadcast
+```
+
+| Contract | Address |
+| --- | --- |
+| BlindAuction | `0xacC12B4bdae66Ef42939340Fa1811BD629F18cC2` |
+| SALE | `0x803cbeb14E07249E6DbE64a76751AbF253925ab5` |
+| QUOTE | `0x19655Bdde974d7410e8AFaf5FA0158e558043105` |
+
+Auction id `1`. Supply 1,000. Grid `minPrice` 50, `stepSize` 10, `stepCount` 6. Deposit and max notional `1_000_000`. Eight slots. Deadlines from the chain: commit `1791649954`, reveal `1791650134`, cancel `1791650314`.
+
+Deploy transaction for the auction contract: `0xc5d4c2674abc3c1085560cc502bb6d44c3f8b4fd1259ad4785e000b7684ff922`. Create-auction transaction: `0x1994fad07b50fc9544224c95fc2e7fe0b6a8cea0833d0ea5ef22b9f5e6b48fe9`.
+
+Explorer: [auction on Monadscan](https://testnet.monadscan.com/address/0xacC12B4bdae66Ef42939340Fa1811BD629F18cC2).
+
+### Step 3 — Run one auction and one refund
+
+**Status: complete.** Confirmed 2026-10-10. Both auctions are finished. Do not settle or cancel them again.
+
+Auction 1 had one counted bid: price step 5, quantity 400, salt `keccak256("blindlaunch-bidder-1")`, commitment `0x0c941dc7cb32b8625f8fdb305cb72f92af596033c8fb96c9e65f2a947c7c9d9f`. Demand was 400 against supply 1,000, so the auction cleared at the minimum price **50**, step 0. Allocation 400. Payment `20000`. Quote refund `980000`. Unsold 600. Proceeds `20000`.
+
+| Action | Transaction |
+| --- | --- |
+| Commit auction 1 | `0x6ad093d407999e54a7271dcf6281f83994403087ee91143fcae8367732e52fbe` |
+| Reveal auction 1 | `0x6b91edccf7c548740c43f47a1721ce731da24ca3dc5baccba42916c8c1645c16` |
+| Settle auction 1 | `0xf26ea9ddc38657d8b66b6444742c11f6a52641efc46255ddb21d807304c2c949` |
+| Claim auction 1 | `0x574094ebe7bf4b3a214bbb9938b272a6cb52aa4d12995541a7617c106107738f` |
+| Reclaim auction 1 | `0xb7a533f0d67d055acbe79bdec18717bcbf100f98694b88e215f9c172b8f3d680` |
+
+Auction 2 supply was 100. The bidder committed and nobody called `settle`. After `cancelAfter`, cancel returned the full `1_000_000` quote deposit and all 100 sale tokens.
+
+| Action | Transaction |
+| --- | --- |
+| Create auction 2 | `0x5f752037ab72900b4e7713c28903316ea21b731def3ee057168f4267486622ba` |
+| Commit auction 2 | `0xdded3ccda2c5523c8bfcc0f8649bde3a1f806b271a646c28dfa9fe7629b86c30` |
+| Cancel auction 2 | `0xca92761f926eaafbab43fc16e751534b032e5df3177de05da73d1ff8ecfa1888` |
+| Claim auction 2 | `0x1d2533971dfb6366aa00ffb3c179528c13445309dfa0a171f502166d3a26045a` |
+| Reclaim auction 2 | `0x0ae2f606cdb688d50858c349d517ab804e95f9c044d6a1451e28335dea494b1c` |
+
+### Step 4 — Demo recording
+
+**Status: not started.** Record the transactions above on [Monadscan](https://testnet.monadscan.com/address/0xacC12B4bdae66Ef42939340Fa1811BD629F18cC2). Show the commit hash before the reveal, the clearing price 50, the refund, and the auction 2 cancellation. Two minutes is enough. Save the video path here when it exists.
+
+### Step 5 — Publish the contract source
+
+**Status: complete.** Pushed to branch `added-readme.md`.
+
+Code link: https://github.com/64xengineers/BlindLaunch/tree/added-readme.md/contracts
+
+`.env` is not in the repo. `contracts/lib/`, `contracts/broadcast/`, and `contracts/cache/` are gitignored.
+
+### Step 6 — Submit to Metropolis
+
+**Status: not started.** Submit at [hackathon.monad.xyz](https://hackathon.monad.xyz/) with the demo from step 4, this README, and the code link from step 5. Track: Onchain Finance & Trading. This needs the user's hackathon account.
+
 ## Contents
 
+- [Continue from here](#continue-from-here)
 - [What we are building](#what-we-are-building)
 - [How the auction works](#how-the-auction-works)
 - [Architecture](#architecture)
@@ -243,7 +342,7 @@ The demo script logs the auction address, token addresses, auction id, and autho
 - Slot order is commit order. Dust at the clearing price prefers earlier commits.
 - The contract caps the book at 64 bids and 64 price steps so `settle` stays bounded.
 - `TestERC20` can be minted by anyone and uses 0 decimals. It exists so the reference numbers appear as whole units.
-- No deployment address is checked in. Record the address from the broadcast log after you deploy.
+- The testnet deployment addresses and transaction hashes are in [Continue from here](#continue-from-here). Keys stay in `.env`.
 - The contract has not been audited.
 
 ## References
