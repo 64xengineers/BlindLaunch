@@ -127,9 +127,18 @@ function walletClient(account: Address): WalletClient {
 
 export async function writeContract(
   account: Address,
-  args: Parameters<WalletClient["writeContract"]>[0],
+  args: {
+    address: Address;
+    abi: typeof auctionAbi | typeof erc20Abi;
+    functionName: string;
+    args: readonly unknown[];
+  },
 ): Promise<Hash> {
-  const hash = await walletClient(account).writeContract(args);
+  const hash = await walletClient(account).writeContract({
+    ...args,
+    account,
+    chain: monadTestnet,
+  } as never);
   await publicClient.waitForTransactionReceipt({ hash });
   return hash;
 }

@@ -102,6 +102,42 @@ Code link: https://github.com/64xengineers/BlindLaunch/tree/added-readme.md/cont
 
 `.env` is not in the repo. `contracts/lib/`, `contracts/broadcast/`, and `contracts/cache/` are gitignored.
 
+### Step 5b — Web app
+
+**Status: complete, not yet pushed.** Confirmed 2026-10-11. Source is in `apps/web` (Vite, React 19, viem, react-router-dom, Tailwind v4). It reads and writes the deployed `BlindAuction` above through MetaMask. It never asks for a private key.
+
+```bash
+pnpm install
+pnpm dev          # http://localhost:5173
+pnpm --filter @blindlaunch/web exec tsc --noEmit
+```
+
+If layout classes stop working, restart `pnpm dev`. A server started before Tailwind was installed serves no utility classes.
+
+Screens, one file each in `apps/web/src/screens`:
+
+| Route | Screen | What it does |
+| --- | --- | --- |
+| `/` | `Home.tsx` | Hero, feature cards, auction list with All/Open/Closed filter, price sandbox, bot race demo, privacy and trust, steps, Monad facts, teams call to action, FAQ, risk notice |
+| `/how` | `HowItWorks.tsx` | Steps, sandbox, bot race demo, comparison table, privacy and trust, costs, FAQ, risks |
+| `/auction/:id` | `BidPage.tsx` | Sticky live status bar with stall and refund path, countdown, close reminder, seal / reveal / settle / cancel / refund card, public commitments with copy and explorer links, live demand chart, about and rules, costs, verify on-chain |
+| `/auction/:id/sealed` | `BidSealed.tsx` | Confirmation, commitment hash, next step |
+| `/auction/:id/result` | `Result.tsx` | Clearing price, chart, your received / paid / refund, allocation table, authority reclaim |
+| `/bids` | `MyBids.tsx` | Every bid of the connected wallet across auctions, status, result, claim or refund button, seal and reveal transaction links |
+| `/team` | `TeamDashboard.tsx` | Auctions created by the connected wallet: raised, bidders, price, sold, collect proceeds |
+| `/create` | `CreateAuction.tsx` | Create form with description, quick close times, price ladder and timeline preview |
+| `/docs` | `Docs.tsx` | Integration guide for other launchpads: addresses, commitment formula, viem snippets, functions, events |
+
+Shared code: `src/auction.tsx` (chain state and actions, `actOn` for any auction id, `loadMyBids`), `src/wallet.ts` (MetaMask, network switch, test-token mint and approve), `src/clearing.ts` (browser copy of the clearing rule for the sandbox, bot demo and charts), `src/components/ui.tsx` (navbar with mobile menu, chart, countdown, toast, footer), `src/components/sections.tsx` (sandbox, steps, comparison, FAQ, Monad facts), `src/components/trust.tsx` (bot race demo, privacy and trust, risks, costs, verify panel, status bar, reminders, rules).
+
+Browser storage, per wallet: `blindlaunch:bid:<auctionId>:<account>` holds the price step, quantity, salt, and seal and reveal transaction hashes. Reveal reads it, so a page reload no longer breaks reveal. The older `blindlaunch:salt:<auctionId>:<account>` key is still read as a fallback. `blindlaunch:meta:<auctionId>` holds the name and description typed at creation; the contract stores no text, so only the creating browser shows it. `blindlaunch:reminders` holds close reminders, which fire as browser notifications while a tab is open.
+
+Before sealing, the bid form blocks what the contract would reject or not count: the creator bidding, a full auction, a second bid from the same wallet, quantity 0, price × quantity above `min(deposit, maxNotional)`, an invalid salt, and the last 15 seconds before `commitDeadline` (the browser clock can differ from block time). `src/clearing.ts` matches `UniformClearing.sol`, including multi-pass dust to earlier slots, and reproduces the worked example below. Before settlement the chart labels its estimate "If settled now".
+
+The bot race demo uses made-up buyers and says so. The trading pool link on the team dashboard is not built: there is no pool in this version. Checked at 375 px and 1280 px with no horizontal scroll.
+
+The design follows the dark brief: background `#0D0C3A`, glass cards, amber `#FFC53D`, lavender `#8F8CF0`, teal `#5EEAD4`, Space Grotesk and JetBrains Mono, with `prefers-reduced-motion` respected.
+
 ### Step 6 — Submit to Metropolis
 
 **Status: not started.** Submit at [hackathon.monad.xyz](https://hackathon.monad.xyz/) with the demo from step 4, this README, and the code link from step 5. Track: Onchain Finance & Trading. This needs the user's hackathon account.
@@ -139,7 +175,7 @@ A project creates an auction with a fixed supply, a minimum price, a discrete pr
 - More than 64 price steps or 64 bidder slots.
 - A claim that launch bots are prevented.
 - Hiding wallet addresses, deposits, reveals, transfers, or the clearing price.
-- A web app. The hackathon surface is the contract, the reference math, and a testnet demo.
+- A hosted web app. The web app in `apps/web` runs on localhost against Monad testnet.
 
 ## How the auction works
 
@@ -167,7 +203,7 @@ contracts/src/BlindAuction.sol     custody, commit, reveal, settle, refund
 Monad testnet (chain id 10143)
 ```
 
-The browser is not part of this build. Nothing outside the contract is allowed to decide the clearing price. `TestERC20` is a public-mint demo token with 0 decimals so amounts match the integer examples. Do not use it as a real asset.
+The web app in `apps/web` only sends transactions and draws charts. Nothing outside the contract is allowed to decide the clearing price. `TestERC20` is a public-mint demo token with 0 decimals so amounts match the integer examples. Do not use it as a real asset.
 
 ## Monad testnet
 
@@ -189,6 +225,7 @@ blindlaunch/
 ├── README.md
 ├── docs/auction-rules.md          integer rules and the worked example
 ├── packages/auction-core/         TypeScript clearing reference and tests
+├── apps/web/                      localhost web app (Vite + React + Tailwind)
 └── contracts/
     ├── foundry.toml
     ├── src/BlindAuction.sol       Monad auction
@@ -201,6 +238,8 @@ blindlaunch/
 ```
 
 ## Quick start
+
+For a full local setup from a fresh clone, including MetaMask, test MON and the web app, follow [SETUP.md](SETUP.md).
 
 Install [Foundry](https://getfoundry.sh), then run the contract tests:
 
