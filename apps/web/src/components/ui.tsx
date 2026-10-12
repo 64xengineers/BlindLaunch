@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import { auctionAddress } from "../config";
 
 export function Logo({ className = "h-10 w-10" }: { className?: string }) {
@@ -258,37 +258,73 @@ export function Navbar({
   onConnect: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const link = ({ isActive }: { isActive: boolean }) =>
-    `text-sm no-underline transition-colors ${isActive ? "text-paper" : "text-mist hover:text-paper"}`;
+  const [scrolled, setScrolled] = useState(false);
+  const { pathname } = useLocation();
+
+  useEffect(() => setOpen(false), [pathname]);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  const desktopLink = ({ isActive }: { isActive: boolean }) =>
+    `inline-flex h-9 items-center rounded-full px-4 text-sm font-medium no-underline transition-colors ${
+      isActive ? "bg-white/12 text-paper shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]" : "text-mist hover:bg-white/5 hover:text-paper"
+    }`;
+
   return (
-    <header className="relative z-20 mx-auto max-w-6xl px-4 py-5">
-      <div className="flex items-center justify-between gap-3">
-        <Link to="/" className="flex min-w-0 items-center gap-2 no-underline" onClick={() => setOpen(false)}>
-          <LockIcon className="h-5 w-5 shrink-0 text-amber" />
-          <Wordmark />
+    <header
+      className={`sticky top-0 z-40 transition-[background-color,border-color,backdrop-filter] duration-300 ${
+        scrolled || open ? "border-b border-white/10 bg-ink/75 backdrop-blur-xl" : "border-b border-transparent"
+      }`}
+    >
+      <div className="mx-auto grid h-16 max-w-6xl grid-cols-[1fr_auto] items-center gap-3 px-4 sm:h-20 lg:grid-cols-[1fr_auto_1fr]">
+        <Link to="/" className="flex w-fit items-center gap-2.5 rounded-lg no-underline" aria-label="Blindlaunch home">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-amber/40 bg-amber/10">
+            <LockIcon className="h-[18px] w-[18px] text-amber" />
+          </span>
+          <span className="text-lg font-bold leading-none tracking-tight text-paper">Blindlaunch</span>
         </Link>
-        <nav className="hidden items-center gap-7 md:flex" aria-label="Primary">
-          {navItems.map(([to, label]) => <NavLink key={to} end className={link} to={to}>{label}</NavLink>)}
+
+        <nav className="hidden items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] p-1 lg:flex" aria-label="Primary">
+          {navItems.map(([to, label]) => <NavLink key={to} end className={desktopLink} to={to}>{label}</NavLink>)}
         </nav>
-        <div className="flex items-center gap-2">
+
+        <div className="flex items-center justify-end gap-2">
           <button
             type="button"
-            className="inline-flex min-h-11 items-center gap-2 whitespace-nowrap rounded-full border border-white/20 bg-white/10 px-4 text-sm font-semibold text-paper backdrop-blur transition-colors hover:border-lavender hover:bg-white/15"
+            className="inline-flex h-11 items-center gap-2 whitespace-nowrap rounded-full border border-white/20 bg-white/10 px-4 text-sm font-semibold text-paper transition-colors hover:border-lavender hover:bg-white/15"
             onClick={onConnect}
           >
-            <span className={`h-2 w-2 rounded-full ${account ? "bg-teal" : "bg-teal/70"}`} />
+            <span className={`h-2 w-2 shrink-0 rounded-full ${account ? "bg-teal shadow-[0_0_8px_#5EEAD4]" : "bg-lilac/60"}`} />
             {account ? (
               <>
-                {account}
-                {mon ? <span className="hidden text-lilac sm:inline">· {Number(mon).toFixed(2)} MON</span> : null}
+                <span className="font-mono text-[13px]">{account}</span>
+                {mon ? <span className="hidden font-normal text-lilac xl:inline">{Number(mon).toFixed(2)} MON</span> : null}
               </>
-            ) : "Connect wallet"}
+            ) : (
+              <>
+                <span className="hidden min-[380px]:inline">Connect wallet</span>
+                <span className="min-[380px]:hidden">Connect</span>
+              </>
+            )}
           </button>
           <button
             type="button"
-            className="grid h-11 w-11 place-items-center rounded-full border border-white/20 bg-white/10 md:hidden"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-paper transition-colors hover:bg-white/15 lg:hidden"
             aria-label={open ? "Close menu" : "Open menu"}
             aria-expanded={open}
+            aria-controls="mobile-nav"
             onClick={() => setOpen((value) => !value)}
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -297,19 +333,24 @@ export function Navbar({
           </button>
         </div>
       </div>
+
       {open ? (
-        <nav className="glass toast mt-3 grid gap-1 p-2 md:hidden" aria-label="Mobile">
+        <nav id="mobile-nav" className="toast mx-auto grid max-w-6xl gap-1 px-4 pb-4 lg:hidden" aria-label="Mobile">
           {navItems.map(([to, label]) => (
             <NavLink
               key={to}
               end
               to={to}
-              onClick={() => setOpen(false)}
-              className={({ isActive }) => `rounded-xl px-4 py-3 no-underline ${isActive ? "bg-white/10 text-paper" : "text-mist"}`}
+              className={({ isActive }) =>
+                `flex min-h-12 items-center justify-between rounded-xl px-4 no-underline transition-colors ${
+                  isActive ? "bg-white/10 font-semibold text-paper" : "text-mist hover:bg-white/5 hover:text-paper"
+                }`}
             >
               {label}
+              <span aria-hidden="true" className="text-lilac">→</span>
             </NavLink>
           ))}
+          {account && mon ? <p className="px-4 pt-2 text-sm text-lilac">Balance {Number(mon).toFixed(2)} MON</p> : null}
         </nav>
       ) : null}
     </header>

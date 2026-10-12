@@ -15,7 +15,7 @@
 @layer base {
   html, body, #root { min-height: 100%; }
 
-  html, body { overflow-x: hidden; }
+  html, body { overflow-x: clip; }
 
   body {
     margin: 0;
