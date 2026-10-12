@@ -48,7 +48,7 @@ export function App() {
   }, [error]);
 
   return (
-    <div className="relative isolate flex min-h-screen flex-col overflow-x-hidden">
+    <div className="relative isolate flex min-h-screen flex-col overflow-x-clip">
       <Background />
       <Navbar account={account ? shortAddress(account) : null} mon={mon} onConnect={() => { void connect(); }} />
       <main className="relative z-10 flex-1">

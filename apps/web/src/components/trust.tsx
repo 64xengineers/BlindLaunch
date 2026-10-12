@@ -328,7 +328,7 @@ export function StatusBar({ auction, now }: { auction: Auction; now: number }) {
   else message = `Anyone can settle now. If nobody does in ${formatLeft(auction.cancelAfter - now)}, the auction can be cancelled and every deposit refunded.`;
 
   return (
-    <div className="glass sticky top-2 z-30 mb-6 px-4 py-3" role="status" aria-live="polite">
+    <div className="glass sticky top-[4.5rem] z-30 sm:top-[5.5rem] mb-6 px-4 py-3" role="status" aria-live="polite">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <ol className="flex flex-wrap items-center gap-1.5" aria-label="Auction status">
           {cancelled ? (
