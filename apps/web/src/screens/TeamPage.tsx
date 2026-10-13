@@ -61,13 +61,13 @@ export function TeamPage() {
   return (
     <ListFrame title="My launches" aside={some ? <PrimaryLink to="/create" icon="plus">Create a launch</PrimaryLink> : null}>
       {!account ? (
-        <Empty pose="idle" say={<>Sign in with the wallet or passkey that <b>creates your launches</b>.</>}>
+        <Empty pose="idle" say={<>Sign in with the wallet or passkey that <b>creates your launches.</b></>}>
           <PrimaryButton className="w-auto" icon="fingerprint" onClick={openConnect}>Sign in</PrimaryButton>
         </Empty>
       ) : null}
       {account && loading && !data ? <ListLoading /> : null}
       {data && data.length === 0 ? (
-        <Empty pose="excited" say={<>You haven't launched anything yet. One token, one price for everyone, <b>no bots</b>.</>}>
+        <Empty pose="excited" say={<>You haven't launched anything yet. One token, one price for everyone, <b>no bots.</b></>}>
           <PrimaryLink to="/create" icon="plus">Create a launch</PrimaryLink>
         </Empty>
       ) : null}

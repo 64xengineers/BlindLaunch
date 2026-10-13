@@ -20,13 +20,13 @@ export function useDecode(target: string, delay = 0): string {
     const start = window.setTimeout(() => {
       interval = window.setInterval(() => {
         step += 1;
-        const settled = Math.floor(step / 3);
+        const settled = Math.floor(step / 2);
         setText(target.split("").map((char, index) => (index < settled || char === " " ? char : glyphs[Math.floor(Math.random() * glyphs.length)]!)).join(""));
         if (settled >= target.length) {
           window.clearInterval(interval);
           setText(target);
         }
-      }, 45);
+      }, 90);
     }, delay);
     return () => {
       window.clearTimeout(start);

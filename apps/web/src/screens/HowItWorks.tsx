@@ -6,7 +6,7 @@ import { Hush, Icon, PrimaryLink, Receipt, ReceiptRow } from "../components/ui";
 
 const outcomes: [IconName, string, string, string][] = [
   ["star", "You won", "You pay the final price for your tokens. Everything else comes back.", "var(--color-yellow)"],
-  ["half", "It was crowded", "Everyone at the final price gets the same fair share. Unused money comes back.", "var(--color-cyan)"],
+  ["half", "It was crowded", "Bids above the final price got everything. Bids right at it each got the same slice of what they asked for. Unused money comes back.", "var(--color-cyan)"],
   ["x", "You missed", "Your max was below the final price. All of your bid money comes back.", "var(--color-coral)"],
   ["shield", "Something broke", "If bids can't unlock in time, anyone can refund everyone. Every cent comes back.", "var(--color-green)"],
 ];

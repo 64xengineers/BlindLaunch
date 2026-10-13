@@ -6,7 +6,7 @@ import { formatUnits, type Address } from "viem";
 import { useSession } from "../auth/session";
 import { reads } from "../chain/clients";
 import { explorerUrl, network } from "../chain/config";
-import { formatAmount, formatDate, shortAddress } from "../chain/format";
+import { formatAmount, shortAddress } from "../chain/format";
 import { lotLabel, phaseOf, priceAt, SEED, STATUS, type AuctionView, type BidView, type TokenMeta } from "../chain/model";
 import { outcomeOf, VerifyLinks } from "../components/auction";
 import { Bubble, CopyButton, Fold, Hush, Icon, Meter, Panel, PrimaryButton, SecondaryButton, Stat, TokenArt, Tracker } from "../components/ui";
@@ -152,7 +152,7 @@ function ResultScreen({ id }: { id: bigint }) {
             <Stat label="Bids" value={<Rolling value={BigInt(auction.bidCount)} decimals={0} exact={auction.bidCount.toLocaleString("en-US")} approx={(shown) => groupedNumber(0)(shown)} delay={500} />} />
             <Stat label="Raised" value={<RollMoney value={auction.totalSold * auction.clearingPrice} quote={auction.quote} delay={500} short />} />
           </div>
-          {settled && auction.seedState !== SEED.None ? <KuruCard auction={auction} position={position} now={now} market={market} onDone={reload} /> : null}
+          {settled && auction.seedState !== SEED.None ? <KuruCard auction={auction} position={position} now={now} onDone={reload} /> : null}
           {settled && auction.forfeitedTotal > 0n && !auction.forfeitsBurned ? <ForfeitCard auction={auction} onDone={reload} /> : null}
         </section>
 
@@ -228,7 +228,7 @@ function PriceHero({ auction, settled, loot }: { auction: AuctionView; settled: 
       {!oneToken ? <div className="res-per">per {lotLabel(auction, sale)}</div> : null}
       <p className="res-say res-everyone">
         Bids unlocked. {people}. <b>{formatAmount(auction.totalSold * auction.lotSize, sale.decimals, 2)} of {tokens(auction.supply, sale)}</b> sold.
-        {startingPrice ? " Not every token sold, so everyone pays the starting price." : ""}
+        {startingPrice ? " Not every token sold, so everyone pays the lowest price." : ""}
         {yours}
       </p>
     </div>
@@ -237,7 +237,7 @@ function PriceHero({ auction, settled, loot }: { auction: AuctionView; settled: 
 
 /* ---------- left: Kuru and forfeits ---------- */
 
-function KuruCard({ auction, position, now, market, onDone }: { auction: AuctionView; position: Position; now: bigint; market: string | null; onDone: () => void }) {
+function KuruCard({ auction, position, now, onDone }: { auction: AuctionView; position: Position; now: bigint; onDone: () => void }) {
   const { run, busy } = useRunner();
   const { sale, quote } = auction;
   const locked = now < auction.seedLockUntil;
@@ -263,7 +263,7 @@ function KuruCard({ auction, position, now, market, onDone }: { auction: Auction
   } else if (live) {
     title = "Trading is live";
     body = <>{sale.symbol} trades on Kuru from <span className="num font-bold">{price}</span></>;
-    note = `Locked until ${formatDate(auction.seedLockUntil)}.`;
+    note = `The starting pool stays on Kuru until ${new Date(Number(auction.seedLockUntil) * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}. Nobody can pull it out before then.`;
   } else if (reserved || waiting) {
     tone = "var(--color-cyan)"; icon = "play";
     title = reserved && !locked ? "Trading never started" : "Start trading on Kuru";
@@ -289,8 +289,9 @@ function KuruCard({ auction, position, now, market, onDone }: { auction: Auction
         {note ? <small>{note}</small> : null}
       </div>
       <div className="acts">
-        {live && market ? <a className="res-go" href={market} target="_blank" rel="noreferrer">Trade on Kuru <span className="arrow">→</span></a> : null}
-        {live && !market ? <span className="flex items-center gap-1 font-mono text-sm text-muted">{shortAddress(position.market)}<CopyButton value={position.market} /></span> : null}
+        {live && network.kuruApp ? <a className="res-go" href={network.kuruApp} target="_blank" rel="noreferrer">Trade on Kuru <span className="arrow">→</span></a> : null}
+        {live && network.kuruApp ? <span className="flex items-center gap-1 text-sm text-muted">Find it with {shortAddress(sale.address)}<CopyButton value={sale.address} /></span> : null}
+        {live && !network.kuruApp ? <span className="flex items-center gap-1 text-sm text-muted">Test market {shortAddress(position.market)}<CopyButton value={position.market} /></span> : null}
         {reserved || waiting ? (
           <SecondaryButton icon="play" disabled={busy !== null} onClick={action("Start trading", `Trading is live on Kuru at ${price}.`, (w) => openMarket(w, auction.id))}>
             {busy === "Start trading" ? "Starting trading…" : "Start trading"}
@@ -370,7 +371,7 @@ function LootCard({ auction, loot, claimable, trading, onDone }: { auction: Auct
 
   const footnote = {
     won: loot.max > auction.clearingPrice ? <>Your max was {priceText(loot.max, quote)}. You paid less: {price} a token.</> : <>Your max was exactly the final price.</>,
-    fair: <>Lots of bids landed exactly on {price}, so each got the same share.</>,
+    fair: <>Lots of bids landed exactly on {price}, so each got the same slice of what it asked for.</>,
     missed: <>All your money comes back.{trading ? ` You can still buy ${sale.symbol} on Kuru.` : ""}</>,
     refund: null,
     burned: <>It gets burned; nobody gets it.</>,
@@ -380,7 +381,7 @@ function LootCard({ auction, loot, claimable, trading, onDone }: { auction: Auct
     ? <>All collected. <b>{[loot.tokens > 0n ? tokens(loot.tokens, sale) : null, loot.back > 0n ? money(loot.back, quote) : null].filter(Boolean).join(" and ")}</b> went to your wallet.</>
     : {
       won: <>GG. Your <b>{tokens(loot.tokens, sale)}</b> and <b>{money(loot.back, quote)}</b> back, in one tap.</>,
-      fair: <>It was crowded at the final price, so everyone there got a fair share. Yours: <b>{tokens(loot.tokens, sale)}</b>.</>,
+      fair: <>It was crowded at the final price, so every bid there got the same slice of what it asked for. Yours: <b>{tokens(loot.tokens, sale)}.</b></>,
       missed: <>The final price ended above your max. All <b>{money(loot.back, quote)}</b> comes back.</>,
       refund: <>Nobody pays anything. All <b>{money(loot.back, quote)}</b> comes back, in one tap.</>,
       burned: <>That bid did not match what was locked, so there is nothing to collect.</>,
@@ -530,7 +531,7 @@ function VisitorCard({ auction, signedIn, trading }: { auction: AuctionView; sig
             {signedIn ? "This account did not bid in this launch, so there is nothing to collect here." : "Sign in to see if you won and to collect what is yours."}
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
-            {signedIn ? <SecondaryButton to="/" icon="grid">See live launches</SecondaryButton> : <SecondaryButton icon="fingerprint" onClick={openConnect}>Sign in</SecondaryButton>}
+            {signedIn ? <SecondaryButton to="/" icon="grid">See live launches</SecondaryButton> : <PrimaryButton className="w-auto" icon="fingerprint" onClick={openConnect}>Sign in to check</PrimaryButton>}
             {signedIn ? <SecondaryButton to="/bids" icon="lock">My bids</SecondaryButton> : null}
           </div>
         </Panel>
@@ -539,7 +540,7 @@ function VisitorCard({ auction, signedIn, trading }: { auction: AuctionView; sig
         <span className="res-hush"><Hush pose={signedIn ? "idle" : "waiting"} size={120} className="bob" /></span>
         <Bubble className="res-after">
           {trading
-            ? <>Missed it? <b>{sale.symbol}</b> trades on Kuru from <b>{priceText(auction.clearingPrice, quote)}</b>.</>
+            ? <>Didn't bid? <b>{sale.symbol}</b> trades on Kuru from <b>{priceText(auction.clearingPrice, quote)}.</b></>
             : <>Next time, lock a secret bid before bidding closes. Everyone who wins pays one price.</>}
         </Bubble>
       </div>

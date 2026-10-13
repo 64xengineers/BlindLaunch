@@ -10,6 +10,8 @@ export type Network = {
   rpcUrl: string;
   explorer: string | null;
   faucet: string | null;
+  /** Kuru's trading app, where launched tokens trade. None on a local chain. */
+  kuruApp: string | null;
   deployment: Deployment | null;
   /** Quote tokens the Create page offers. A quote token the authority controls could withhold refunds. */
   quoteTokens: Address[];
@@ -49,7 +51,8 @@ export function networkFor(name: NetworkName, available: Record<string, unknown>
   });
   const deployment = deploymentFor(definition.id, available);
   const quoteTokens = name === "mainnet" ? [MAINNET_USDC] : deployment ? [deployment.quote] : [];
-  return { name, label: definition.label, chain, rpcUrl, explorer: definition.explorer, faucet: definition.faucet, deployment, quoteTokens };
+  const kuruApp = name === "local" ? null : "https://www.kuru.io";
+  return { name, label: definition.label, chain, rpcUrl, explorer: definition.explorer, faucet: definition.faucet, kuruApp, deployment, quoteTokens };
 }
 
 function selected(): NetworkName {

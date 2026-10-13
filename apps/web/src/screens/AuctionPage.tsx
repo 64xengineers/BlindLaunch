@@ -7,7 +7,7 @@ import { noteKey, sealNote, writeNote } from "../bids/vault";
 import { reads } from "../chain/clients";
 import { network } from "../chain/config";
 import { formatAmount } from "../chain/format";
-import { bidProblem, phaseOf, priceAt, publicActions, type AuctionView, type BidView, type Phase } from "../chain/model";
+import { bidProblem, phaseOf, priceAt, publicActions, SEED, STATUS, type AuctionView, type BidView, type Phase } from "../chain/model";
 import { AuctionRules, BidList, moneyText, PhaseSticker, priceText, Tip, tokensText, trackerOf, VerifyLinks, wholeLots } from "../components/auction";
 import type { HushPose, IconName } from "../components/art";
 import { Bubble, Countdown, Fold, Hush, Icon, Meter, Panel, PrimaryButton, PrimaryLink, Receipt, ReceiptRow, SecondaryButton, Stat, Sticker, TokenArt, Tracker, timeLeft } from "../components/ui";
@@ -44,11 +44,14 @@ function AuctionScreen({ id }: { id: bigint }) {
   const { data, loading, reload } = usePolling(async () => {
     const auction = await reads!.auction(id);
     if (!auction) return null;
-    const [bids, mySlot] = await Promise.all([
+    const [bids, mySlot, position] = await Promise.all([
       reads!.bids(id, auction.bidCount),
       account ? reads!.slotOf(id, account) : Promise.resolve(null),
+      auction.status === STATUS.Settled && auction.seedState !== SEED.None ? reads!.position(id) : Promise.resolve(null),
     ]);
-    return { auction, bids, mySlot };
+    // Same rule as the result page: once the Kuru market is open, the launch is at TRADING.
+    const trading = position !== null && position.seeded && !position.unwound;
+    return { auction, bids, mySlot, trading };
   }, [id, account]);
 
   if (loading && !data) {
@@ -63,7 +66,7 @@ function AuctionScreen({ id }: { id: bigint }) {
   }
   if (!data) return <NotFound message={`Launch ${id} does not exist.`} />;
 
-  const { auction, bids, mySlot } = data;
+  const { auction, bids, mySlot, trading } = data;
   const phase = phaseOf(auction, now);
   const myBid = mySlot !== null ? bids[mySlot] ?? null : null;
   const creator = account !== null && account.toLowerCase() === auction.authority.toLowerCase();
@@ -73,7 +76,7 @@ function AuctionScreen({ id }: { id: bigint }) {
   return (
     <div className="au-page">
       <div className="au-grid">
-        <LaunchSide auction={auction} phase={phase} now={now} mood={mood} hushRef={hushRef} />
+        <LaunchSide auction={auction} phase={phase} now={now} mood={mood} hushRef={hushRef} trading={trading} />
         <Panel as="section" large accent className={`au-side rise d1 ${bidding && mySlot !== null && !sealing ? "is-locked" : ""}`}>
           {bidding && (mySlot === null || sealing) && !creator && auction.bidCount < auction.maxBids ? (
             <BidCard
@@ -129,13 +132,13 @@ function moodOf(phase: Phase, auction: AuctionView, who: { mine: boolean; creato
     case "opening":
       return { pose: "waiting", say: <>Unlocking. <b>Nothing</b> for you to do.</> };
     case "ready":
-      return { pose: "excited", say: <>Somebody press the button! One tap reveals the <b>final price</b>.</> };
+      return { pose: "excited", say: <>Somebody press the button! One tap reveals the <b>final price.</b></> };
     case "cancellable":
       return { pose: "error", say: <>Keys didn't show. Everyone gets <b>every cent</b> back.</> };
     case "settled":
       return auction.totalSold > 0n
-        ? { pose: "win", say: <>The result is in. Everyone who won pays <b>{priceText(auction, auction.clearingPrice)}</b>.</> }
-        : { pose: "refund", say: <>Nothing sold this time. Everyone gets their <b>money back</b>.</> };
+        ? { pose: "win", say: <>The result is in. Everyone who won pays <b>{priceText(auction, auction.clearingPrice)}.</b></> }
+        : { pose: "refund", say: <>Nothing sold this time. Everyone gets their <b>money back.</b></> };
     case "cancelled":
       return { pose: "refund", say: <>Called off. Everyone gets <b>every cent</b> back.</> };
   }
@@ -149,12 +152,12 @@ const trust: [IconName, string][] = [
   ["return", "Unused money comes straight back."],
 ];
 
-function LaunchSide({ auction, phase, now, mood, hushRef }: { auction: AuctionView; phase: Phase; now: bigint; mood: Mood; hushRef: RefObject<HTMLSpanElement | null> }) {
+function LaunchSide({ auction, phase, now, mood, hushRef, trading = false }: { auction: AuctionView; phase: Phase; now: bigint; mood: Mood; hushRef: RefObject<HTMLSpanElement | null>; trading?: boolean }) {
   const bidsShown = Math.round(useCountUp(auction.bidCount));
   const top = priceAt(auction, auction.stepCount - 1);
   const seeded = auction.seedSaleLots > 0n || auction.seedQuoteBps > 0;
   const lines: [IconName, string][] = [...trust, seeded ? ["arrow-up-right", "Trading opens at that same price."] : ["check", "If it breaks, everyone gets a full refund."]];
-  const tracker = trackerOf(phase);
+  const tracker = trading ? { now: "trading" as const, bad: false, done: false } : trackerOf(phase);
   const closing = Number(auction.commitDeadline - now);
 
   return (
@@ -188,7 +191,7 @@ function LaunchSide({ auction, phase, now, mood, hushRef }: { auction: AuctionVi
       ) : null}
 
       <div className="au-stats rise d2">
-        <Stat label="Secret bids" value={bidsShown.toLocaleString()} tone="cyan" sub={`room for ${auction.maxBids.toLocaleString()}`} />
+        <Stat label="Secret bids" value={bidsShown.toLocaleString()} tone="cyan" sub={auction.maxBids - auction.bidCount <= 50 ? `only ${(auction.maxBids - auction.bidCount).toLocaleString()} spots left` : "nobody can see them"} />
         <Stat label="Prices from" value={priceText(auction, auction.minPrice)} sub={`up to ${priceText(auction, top)}`} />
         <Stat label="Bid money" value={moneyText(auction.deposit, auction.quote, false)} sub="unused part comes back" />
       </div>
@@ -309,7 +312,8 @@ function BidCard({ auction, account, alreadyBid, now, onDone, hushRef, setMood, 
   }
 
   function typeLots(text: string) {
-    const clean = text.replace(/[^\d]/g, "").replace(/^0+(?=\d)/, "");
+    // Whole tokens only: "12.5" means 12, never 125.
+    const clean = (text.replace(/[,\s_]/g, "").split(".")[0] ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
     setLotsText(clean);
     const match = presets.find((p) => clean !== "" && lotsFor(p.spend, step) === BigInt(clean));
     setPreset(match ? match.key : null);
@@ -336,7 +340,7 @@ function BidCard({ auction, account, alreadyBid, now, onDone, hushRef, setMood, 
 
   async function seal() {
     setSealing(true);
-    setMood({ pose: "locking", open: true, say: passkey ? <>Locking it on your device. Confirm with your <b>passkey</b>.</> : <>Locking it on your device. Confirm in your <b>wallet</b>.</> });
+    setMood({ pose: "locking", open: true, say: passkey ? <>Locking it on your device. Confirm with your <b>passkey.</b></> : <>Locking it on your device. Confirm in your <b>wallet.</b></> });
     const record = await run("Seal bid", (w) => placeBid(w, auction.id, step, lots), "Bid locked. Nobody can see it. Not even us.");
     if (!record) {
       setMood(null);
@@ -443,6 +447,7 @@ function BidCard({ auction, account, alreadyBid, now, onDone, hushRef, setMood, 
           ))}
           <label className="au-typed" title={whole ? "Or type how many tokens" : "Or type how many packs"}>
             <span className="sr-only">{whole ? `Or type how many ${sale.symbol}` : `Or type how many packs of ${formatAmount(auction.lotSize, sale.decimals)} ${sale.symbol}`}</span>
+            <span className="or" aria-hidden="true">{whole ? "or tokens" : "or packs"}</span>
             <input
               id="bid-tokens"
               className="field field-num"
@@ -469,7 +474,8 @@ function BidCard({ auction, account, alreadyBid, now, onDone, hushRef, setMood, 
       </div>
 
       <div ref={wrapRef} className="au-receipt-wrap">
-        <Receipt id="receipt" title="Your receipt" aside="if you win">
+        <Receipt id="receipt" title="Your receipt" aside="locked now, settled later">
+          <ReceiptRow icon="lock" tone="violet" label="You lock now (same for everyone)" value={money(auction.deposit)} />
           <ReceiptRow icon="coin" tone="cyan" label="You get up to" value={valid ? <Rolling value={asNumber(lots * auction.lotSize, sale.decimals)} exact={tokensText(auction, lots)} format={tokensFloat} /> : "–"} />
           <ReceiptRow icon="dollar" tone="yellow" label="You pay at most" value={valid ? <Rolling value={asNumber(maxPay, quote.decimals)} exact={money(maxPay)} format={moneyFloat} /> : "–"} />
           <ReceiptRow icon="return" tone="green" label="Comes back for sure" value={valid && back >= 0n ? <Rolling value={asNumber(back, quote.decimals)} exact={money(back)} format={moneyFloat} /> : "–"} />
@@ -660,6 +666,12 @@ function PhasePanel({ auction, phase, myBid, now, onDone }: { auction: AuctionVi
             If the bids haven't unlocked in <b className="num text-paper">{timeLeft(Number(auction.cancelAfter), Number(now))}</b>, anyone can refund everyone.
           </p>
         )}
+        <h3 className="label mt-7">What happens next</h3>
+        <ol className="au-next">
+          <li className="is-done"><span className="n"><Icon name="check" size={16} /></span>Bidding closed</li>
+          <li><span className="n">2</span>Every bid unlocks, then the final price is set</li>
+          <li><span className="n">3</span>Winners collect tokens, everyone collects unused money</li>
+        </ol>
         <Tip className="au-tip-panel" />
       </div>
     );

@@ -27,7 +27,7 @@ const questions: [string, string][] = [
   ["Can anyone see my bid?", "No. It locks on your device before it leaves, and unlocks only after bidding ends. Not even we can see it."],
   ["What do I pay?", "The final price times the tokens you get. Never more than your max price."],
   ["Do I need to come back?", "Only to collect. Bids unlock by themselves when bidding ends. There is no reveal step."],
-  ["What if it's crowded?", "If more people want tokens at the final price than there are tokens, everyone at that price gets the same fair share."],
+  ["What if it's crowded?", "Bids above the final price get everything they asked for. Bids right at it share what is left: each gets the same slice (say 60%) of what it asked for."],
   ["Why does everyone lock the same bid money?", "So nobody can guess how big your bid is. Whatever you don't spend comes back."],
   ["Who unlocks the bids?", "Three independent keepers each hold part of the key. Any two are enough. Two of them teaming up could peek early, which is why different people run them."],
   ["What if something breaks?", "If bids can't unlock in time, anyone can press Refund everyone. Every cent comes back."],

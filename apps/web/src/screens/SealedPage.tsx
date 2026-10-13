@@ -7,7 +7,8 @@ import { explorerUrl, network } from "../chain/config";
 import { formatDate, shortAddress } from "../chain/format";
 import { priceAt, type AuctionView } from "../chain/model";
 import { moneyText, priceText, Tip, tokensText, VerifyLinks } from "../components/auction";
-import { Bubble, CopyButton, Hush, Icon, Panel, Receipt, ReceiptRow, SecondaryButton, TokenArt, Tracker, timeLeft } from "../components/ui";
+import { Bubble, CopyButton, Hush, Icon, Panel, PrimaryButton, PrimaryLink, Receipt, ReceiptRow, SecondaryButton, TokenArt, Tracker, timeLeft } from "../components/ui";
+import { openConnect } from "../state/connect";
 import { friendlyError } from "../state/errors";
 import { useNow, usePolling } from "../state/hooks";
 import { calm } from "../state/motion";
@@ -56,6 +57,10 @@ export function SealedPage() {
 
   const closed = auction ? now >= auction.commitDeadline : false;
 
+  // Only say "Bid locked" to a wallet that really has a bid here.
+  if (!commitTx && (account === null || data?.slot === null)) return <NoBid id={id!} signedIn={account !== null} />;
+  if (!commitTx && data === undefined) return <div className="au-page"><div className="shimmer h-72" aria-label="Loading" /></div>;
+
   return (
     <div className="au-page au-sealed">
       <Tracker now="bid" done className="rise" />
@@ -101,7 +106,7 @@ export function SealedPage() {
               </dd>
             </div>
             {data?.slot !== null && data?.slot !== undefined ? (
-              <div><dt>Place in line</dt><dd className="num">#{data.slot + 1}</dd></div>
+              <div><dt>Bid number</dt><dd className="num">#{data.slot + 1}</dd></div>
             ) : null}
             {auction ? <div><dt>Bidding closes</dt><dd>{formatDate(auction.commitDeadline)}</dd></div> : null}
             {commitTx ? (
@@ -186,5 +191,27 @@ function NoteReceipt({ auction, note }: { auction: AuctionView; note: BidNote })
         You asked for {tokensText(auction, lots)} at up to {priceText(auction, priceAt(auction, note.step))}. Only your passkey can open this note.
       </p>
     </>
+  );
+}
+
+function NoBid({ id, signedIn }: { id: string; signedIn: boolean }) {
+  return (
+    <div className="au-page">
+      <Panel large accent className="mx-auto mt-6 grid max-w-[46rem] grid-cols-[auto_1fr] items-center gap-6 p-8">
+        <Hush pose="waiting" size={130} className="bob" />
+        <div className="min-w-0">
+          <h1 className="m-0 text-[40px] font-bold leading-none">No secret bid {signedIn ? "from this wallet" : "yet"}</h1>
+          <p className="mt-3 mb-0 text-[18px] text-muted">
+            {signedIn ? "This wallet has not locked a bid in this launch." : "Sign in to see the bid you locked in this launch."}
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            {signedIn
+              ? <PrimaryLink to={`/auction/${id}`} icon="chevron-left">Back to the launch</PrimaryLink>
+              : <PrimaryButton className="w-auto" icon="fingerprint" onClick={openConnect}>Sign in</PrimaryButton>}
+            {signedIn ? null : <SecondaryButton to={`/auction/${id}`} icon="chevron-left">Back to the launch</SecondaryButton>}
+          </div>
+        </div>
+      </Panel>
+    </div>
   );
 }

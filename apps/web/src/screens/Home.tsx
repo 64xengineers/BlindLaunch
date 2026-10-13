@@ -67,10 +67,10 @@ function describe(auction: AuctionView, now: bigint): Info {
   switch (phase) {
     case "scheduled":
       return { phase, chip: ["violet", "clock", "Starts soon"], note: "Bidding opens soon.", action: "See launch", to: page,
-        stats: [["Opens in", timeLeft(Number(auction.commitStart), n), "violet"], ["Starts at", priceText(auction, auction.minPrice)], ["For sale", tokens(auction)]] };
+        stats: [["Opens in", timeLeft(Number(auction.commitStart), n), "violet"], ["Prices from", priceText(auction, auction.minPrice)], ["For sale", tokens(auction)]] };
     case "bidding":
       return { phase, chip: ["yellow", "live", "Live"], note: "Bid before the timer runs out.", action: `Bid on ${auction.sale.symbol}`, to: page,
-        stats: [["Closes in", timeLeft(Number(auction.commitDeadline), n), "yellow"], ["Secret bids", bids, "cyan"], ["Starts at", priceText(auction, auction.minPrice)]] };
+        stats: [["Closes in", timeLeft(Number(auction.commitDeadline), n), "yellow"], ["Secret bids", bids, "cyan"], ["Prices from", priceText(auction, auction.minPrice)]] };
     case "awaitingKeys":
       return { phase, chip: ["cyan", "key", "Unlocking"], note: "Bids are unlocking. Nothing to do.", action: "Watch it unlock", to: page,
         stats: [["Secret bids", bids, "cyan"], ["Unlocked", unlocked], ["For sale", tokens(auction)]] };
@@ -151,8 +151,8 @@ function MissionCard({ auction, now, primary }: { auction: AuctionView; now: big
         </div>
         <dl className="hm-stats is-big">
           <div><dt className="label">Secret bids</dt><dd className="num text-cyan">{bids}</dd></div>
-          <div><dt className="label">Starts at</dt><dd className="num text-paper">{priceText(auction, auction.minPrice)}</dd></div>
-          <div><dt className="label">Bid money</dt><dd className="num text-paper">{moneyText(auction, auction.deposit)}</dd></div>
+          <div><dt className="label">Prices from</dt><dd className="num text-paper">{priceText(auction, auction.minPrice)}</dd></div>
+          <div><dt className="label">Bid money</dt><dd className="num text-paper">{moneyText(auction, auction.deposit)}</dd><dd className="m-0 mt-1 text-[13px] font-semibold text-muted">unused part comes back</dd></div>
         </dl>
         {primary ? (
           <PrimaryLink to={info.to} icon="lock" className="w-full">{info.action}</PrimaryLink>
@@ -195,7 +195,7 @@ function HeroSide({ featured, nextSoon, loading, total, now }: { featured: Aucti
     <div className="hm-side rise d2">
       <div className="hm-hush">
         <span className="hm-halftone" aria-hidden="true" />
-        <p className="bubble hm-bubble-r">{featured ? <>Bots can't snipe what they <b>can't see</b>.</> : <>Quiet right now. I'm <b>watching</b>.</>}</p>
+        <p className="bubble hm-bubble-r">{featured ? <>Bots can't snipe what they <b>can't see.</b></> : <>Quiet right now. I'm <b>watching.</b></>}</p>
         <Hush pose={featured ? "excited" : "waiting"} size={168} className={featured ? "hm-hop" : "bob"} />
       </div>
       {featured ? (
@@ -238,11 +238,13 @@ export function Home() {
   const featured = live[0] ?? null;
   const nextSoon = auctions.filter((auction) => phaseOf(auction, now) === "scheduled").sort((a, b) => Number(a.commitStart - b.commitStart))[0] ?? null;
   const visible = auctions.filter((auction) => auction !== featured && (filter === "all" || (filter === "open") === isOpen(auction, now)));
-  const openCount = auctions.filter((auction) => isOpen(auction, now)).length;
+  // The featured live launch sits in the hero, so the list and its counts leave it out.
+  const listed = auctions.filter((auction) => auction !== featured);
+  const openCount = listed.filter((auction) => isOpen(auction, now)).length;
   const groups = order
     .map((group) => [group, visible.filter((auction) => groupOf[phaseOf(auction, now)] === group)] as const)
     .filter(([, list]) => list.length > 0);
-  const tabs: [Filter, string, number][] = [["all", "All", auctions.length], ["open", "Live & soon", openCount], ["closed", "Ended", auctions.length - openCount]];
+  const tabs: [Filter, string, number][] = [["all", "All", listed.length], ["open", "Live & soon", openCount], ["closed", "Ended", listed.length - openCount]];
 
   return (
     <div className="hm-wrap">
@@ -271,7 +273,7 @@ export function Home() {
 
       <section id="launches" className="hm-section scroll-mt-28" aria-labelledby="launches-title">
         <div className="hm-board-head">
-          <SectionTitle id="launches-title" count={data ? auctions.length : undefined}>Launches</SectionTitle>
+          <SectionTitle id="launches-title" count={data ? listed.length : undefined}>{featured ? "More launches" : "Launches"}</SectionTitle>
           <div className="hm-tabs" role="tablist" aria-label="Filter launches">
             {tabs.map(([value, label, count]) => (
               <button key={value} type="button" role="tab" aria-selected={filter === value} onClick={() => setFilter(value)}>

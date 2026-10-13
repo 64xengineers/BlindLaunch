@@ -122,7 +122,7 @@ export function MyBids() {
   return (
     <ListFrame title="My bids">
       {!account ? (
-        <Empty pose="idle" say={<>Sign in to see your bids and <b>collect what you won</b>.</>}>
+        <Empty pose="idle" say={<>Sign in to see your bids and <b>collect what you won.</b></>}>
           <PrimaryButton className="w-auto" icon="fingerprint" onClick={openConnect}>Sign in</PrimaryButton>
         </Empty>
       ) : null}
