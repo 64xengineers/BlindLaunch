@@ -4782,11 +4782,11 @@ import {ClearingHarness} from "./Mocks.sol";
 import {V2Base} from "./V2Base.sol";
 
 contract FuzzTest is V2Base {
-    ClearingHarness internal reference;
+    ClearingHarness internal v1Clearing;
 
     function setUp() public override {
         super.setUp();
-        reference = new ClearingHarness();
+        v1Clearing = new ClearingHarness();
     }
 
     function testFuzz_matchesV1ClearingAndConservesFunds(uint256 seed, uint8 count, uint16 supply, uint8 pairChoice)
@@ -4861,7 +4861,7 @@ contract FuzzTest is V2Base {
             book[cursor] = UniformClearing.Bid({slot: slot, priceStep: b.step, quantity: b.quantity, allocation: 0});
             ++cursor;
         }
-        return reference.clear(p.supply, p.minPrice, p.stepSize, p.stepCount, book);
+        return v1Clearing.clear(p.supply, p.minPrice, p.stepSize, p.stepCount, book);
     }
 }
 ```
