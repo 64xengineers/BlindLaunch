@@ -4684,12 +4684,24 @@ contract VectorsTest is V2Base {
     function _runCase(string memory json, string memory at) internal {
         _deploy();
         uint256[] memory secretKeys = vm.parseJsonUintArray(json, string.concat(at, ".secretKeys"));
+        _enqueueVectorKeys(secretKeys);
+        uint256 id = _createWideAuction();
+        _commitFromJson(json, at, id);
+        _publishAndOpen(json, at, id, secretKeys);
+        _assertOpened(json, at, id);
+    }
+
+    function _enqueueVectorKeys(uint256[] memory secretKeys) internal {
         for (uint8 i = 0; i < 3; ++i) {
             Secp256k1.Point[] memory keys = new Secp256k1.Point[](1);
             keys[0] = _pub(secretKeys[i]);
             vm.prank(keeperOwners[i]);
             registry.enqueue(i, keys);
         }
+    }
+
+    /// Every step valid and no notional limit, so validity depends only on the hash check.
+    function _createWideAuction() internal returns (uint256 id) {
         BlindAuctionV2.CreateParams memory p = _params();
         p.stepCount = 64;
         p.stepSize = 1;
@@ -4697,9 +4709,11 @@ contract VectorsTest is V2Base {
         p.deposit = type(uint128).max;
         p.maxNotional = type(uint128).max;
         vm.prank(authority);
-        uint256 id = auction.createAuction(p);
+        id = auction.createAuction(p);
         assertEq(id, 1);
+    }
 
+    function _commitFromJson(string memory json, string memory at, uint256 id) internal {
         address bidder = vm.parseJsonAddress(json, string.concat(at, ".bidder"));
         Secp256k1.Point memory ephemeral = Secp256k1.Point(
             vm.parseJsonUint(json, string.concat(at, ".Rx")), vm.parseJsonUint(json, string.concat(at, ".Ry"))
@@ -4707,23 +4721,26 @@ contract VectorsTest is V2Base {
         uint256[] memory cList = vm.parseJsonUintArray(json, string.concat(at, ".c"));
         uint256[3] memory c = [cList[0], cList[1], cList[2]];
         bytes32 h = vm.parseJsonBytes32(json, string.concat(at, ".h"));
-
-        quote.mint(bidder, p.deposit);
+        uint256 deposit = auction.getAuction(id).deposit;
+        quote.mint(bidder, deposit);
         vm.startPrank(bidder);
-        quote.approve(address(auction), p.deposit);
+        quote.approve(address(auction), deposit);
         auction.commit(id, ephemeral, c, h);
         vm.stopPrank();
+    }
 
+    function _publishAndOpen(string memory json, string memory at, uint256 id, uint256[] memory secretKeys) internal {
         uint8 pairA = uint8(vm.parseJsonUint(json, string.concat(at, ".pairA")));
         uint8 pairB = uint8(vm.parseJsonUint(json, string.concat(at, ".pairB")));
-        vm.warp(p.commitDeadline);
+        vm.warp(auction.getAuction(id).commitDeadline);
         auction.publishKey(id, pairA, secretKeys[pairA]);
         auction.publishKey(id, pairB, secretKeys[pairB]);
-
         uint256[] memory sx = vm.parseJsonUintArray(json, string.concat(at, ".Sx"));
         uint256[] memory sy = vm.parseJsonUintArray(json, string.concat(at, ".Sy"));
         auction.open(id, 0, Secp256k1.Point(sx[pairA], sy[pairA]), Secp256k1.Point(sx[pairB], sy[pairB]));
+    }
 
+    function _assertOpened(string memory json, string memory at, uint256 id) internal view {
         BlindAuctionV2.Bid memory b = auction.getBid(id, 0);
         bool counted = vm.parseJsonBool(json, string.concat(at, ".counted"));
         assertEq(b.counted, counted, vm.parseJsonString(json, string.concat(at, ".label")));
