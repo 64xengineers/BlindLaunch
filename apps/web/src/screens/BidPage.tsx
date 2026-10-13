@@ -11,7 +11,7 @@ export function BidPage() {
   const auction = useAuction();
   const {
     account, wrongChain, busy, now, bids, mySlot, myBid,
-    priceStep, quantity, salt, quotedPrice, setPriceStep, setQuantity, setSalt,
+    priceStep, quantity, salt, quotedPrice, setPriceStep, setQuantity, setSalt, recoveryCode, setRecoveryCode,
     selectAuction, selected, commit, reveal, act, connect,
   } = auction;
 
@@ -151,7 +151,7 @@ export function BidPage() {
               <details className="mt-4 text-sm">
                 <summary className="min-h-11 cursor-pointer py-2 text-lilac hover:text-paper">Advanced: secret salt</summary>
                 <label className="grid gap-2 text-mist">
-                  Leave empty to derive it from a free wallet signature (recoverable on any device). A custom salt is stored only in this browser.
+                  Leave empty to build it from a free wallet signature plus a random recovery code, so you can reveal on another device. A custom salt is stored only in this browser.
                   <input className="field font-mono text-xs" value={salt} onChange={(event) => setSalt(event.target.value)} />
                 </label>
               </details>
@@ -182,10 +182,14 @@ export function BidPage() {
                     <div className="flex justify-between"><dt className="text-lilac">Saved bid</dt><dd className="font-mono text-paper">{priceAt(selected, storedBid.step).toString()} × {storedBid.quantity}</dd></div>
                   ) : !myBid.revealed ? (
                     <div className="grid gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                      <p className="text-xs text-lilac">No saved bid in this browser. Enter the number of tokens you bid. Your wallet signs the same free message as when you sealed, and the price is recovered from the on-chain commitment.</p>
+                      <p className="text-xs text-lilac">No saved bid in this browser. Enter the number of tokens you bid and the recovery code shown when you sealed. Your wallet signs the same free message, and the price is recovered from the on-chain commitment.</p>
                       <label className="grid gap-1 text-xs text-mist">
                         Tokens you bid
                         <input className="field" inputMode="numeric" placeholder="Amount" value={quantity} onChange={(event) => setQuantity(event.target.value.replace(/[^\d]/g, ""))} />
+                      </label>
+                      <label className="grid gap-1 text-xs text-mist">
+                        Recovery code
+                        <input className="field font-mono text-xs" placeholder="0x…" autoComplete="off" spellCheck={false} value={recoveryCode} onChange={(event) => setRecoveryCode(event.target.value.trim())} />
                       </label>
                     </div>
                   ) : null}

@@ -252,7 +252,7 @@ export function TeamsCta() {
 }
 
 const faqs = [
-  ["Can anyone see my bid before bidding closes?", "No. Only a hash of your price, quantity and a secret salt is stored on chain. The salt comes from a free signature by your wallet, so only you can recreate it, and it stays private until you reveal."],
+  ["Can anyone see my bid before bidding closes?", "No. Only a hash of your price, quantity and a secret salt is stored on chain. The salt is built from a free signature by your wallet plus a private recovery code, so neither alone can open your bid, and it stays private until you reveal."],
   ["What if I forget to reveal?", "An unrevealed bid is not filled. Your deposit is not lost: after settlement you can claim it back."],
   ["Why does everyone pay the same price?", "The contract finds the highest price where total demand covers the supply. Every winner pays that price, even if they bid higher."],
   ["What happens if the auction is cancelled?", "If nobody settles before the cancel time, anyone can cancel. Every bidder can then claim the full deposit back."],

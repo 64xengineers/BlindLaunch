@@ -8,8 +8,10 @@ import {
   ensureAllowance,
   ensureTokenBalance,
   hashBid,
+  combineSalt,
   deriveSalt,
   publicClient,
+  randomSalt,
   saltKey,
   writeContract,
 } from "./wallet";
@@ -62,9 +64,11 @@ type AuctionContextValue = {
   priceStep: string;
   quantity: string;
   salt: string;
+  recoveryCode: string;
   setPriceStep: (value: string) => void;
   setQuantity: (value: string) => void;
   setSalt: (value: string) => void;
+  setRecoveryCode: (value: string) => void;
   selectAuction: (id: bigint) => void;
   selected: Auction | null;
   myBid: Bid | undefined;
@@ -160,7 +164,7 @@ async function loadAuctions(): Promise<Auction[]> {
   return auctions.reverse();
 }
 
-export type StoredBid = { step: number; quantity: string; salt: string; derived?: boolean; commitTx?: string; revealTx?: string };
+export type StoredBid = { step: number; quantity: string; salt: string; code?: string; commitTx?: string; revealTx?: string };
 
 function storedBidKey(auctionId: bigint | string, account: string) {
   return `blindlaunch:bid:${auctionId.toString()}:${account.toLowerCase()}`;
@@ -267,6 +271,7 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
   const [priceStep, setPriceStep] = useState("1");
   const [quantity, setQuantity] = useState("10");
   const [salt, setSalt] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
 
   const selected = auctions.find((auction) => auction.id === selectedId) ?? null;
 
@@ -344,10 +349,13 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!account || selectedId === null) {
       setSalt("");
+      setRecoveryCode("");
       return;
     }
-    const stored = readStoredBid(selectedId, account)?.salt || localStorage.getItem(saltKey(selectedId.toString(), account));
+    const storedBid = readStoredBid(selectedId, account);
+    const stored = storedBid?.salt || localStorage.getItem(saltKey(selectedId.toString(), account));
     setSalt(stored ?? "");
+    setRecoveryCode(storedBid?.code ?? "");
   }, [account, selectedId]);
 
   async function connect() {
@@ -384,10 +392,12 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
     const qty = BigInt(quantity);
     const custom = /^0x[0-9a-fA-F]{64}$/.test(salt) ? (salt as `0x${string}`) : null;
     await run("Seal bid", async () => {
-      const nextSalt = custom ?? (await deriveSalt(account, selected.id));
+      const code = custom ? undefined : randomSalt();
+      const nextSalt = custom ?? combineSalt(await deriveSalt(account, selected.id), code as `0x${string}`);
       localStorage.setItem(saltKey(selected.id.toString(), account), nextSalt);
       setSalt(nextSalt);
-      writeStoredBid(selected.id, account, { step, quantity: qty.toString(), salt: nextSalt, derived: custom === null });
+      setRecoveryCode(code ?? "");
+      writeStoredBid(selected.id, account, { step, quantity: qty.toString(), salt: nextSalt, code });
       const commitment = hashBid(selected.id, account, step, qty, nextSalt);
       await ensureTokenBalance(account, quoteTokenAddress, selected.deposit);
       await ensureAllowance(account, quoteTokenAddress, selected.deposit);
@@ -420,14 +430,29 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
           throw new Error("Enter the number of tokens you bid so the bid can be recovered.");
         }
         qty = BigInt(quantity);
-        if (!/^0x[0-9a-fA-F]{64}$/.test(storedSalt ?? "")) storedSalt = await deriveSalt(account, selected.id);
-        const steps = Array.from({ length: selected.stepCount }, (_, index) => index);
-        const match = steps.find((candidate) => hashBid(selected.id, account, candidate, qty, storedSalt) === commitment);
-        if (match === undefined) {
-          throw new Error("Could not recover the bid. Check the token amount, and use the wallet that sealed it.");
+        const code = recoveryCode.trim();
+        if (!/^0x[0-9a-fA-F]{64}$/.test(code)) {
+          throw new Error("Enter the recovery code shown when you sealed the bid.");
         }
-        step = match;
-        writeStoredBid(selected.id, account, { step, quantity: qty.toString(), salt: storedSalt, derived: true });
+        const candidates: `0x${string}`[] = [];
+        if (/^0x[0-9a-fA-F]{64}$/.test(storedSalt ?? "")) candidates.push(storedSalt);
+        const signatureSalt = await deriveSalt(account, selected.id);
+        candidates.push(combineSalt(signatureSalt, code as `0x${string}`), signatureSalt);
+        const steps = Array.from({ length: selected.stepCount }, (_, index) => index);
+        let match: { step: number; salt: `0x${string}` } | undefined;
+        for (const candidate of candidates) {
+          const found = steps.find((index) => hashBid(selected.id, account, index, qty, candidate) === commitment);
+          if (found !== undefined) {
+            match = { step: found, salt: candidate };
+            break;
+          }
+        }
+        if (!match) {
+          throw new Error("Could not recover the bid. Check the token amount and recovery code, and use the wallet that sealed it.");
+        }
+        step = match.step;
+        storedSalt = match.salt;
+        writeStoredBid(selected.id, account, { step, quantity: qty.toString(), salt: storedSalt, code });
       }
       const hash = await writeContract(account, {
         address: auctionAddress,
@@ -524,9 +549,11 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
     priceStep,
     quantity,
     salt,
+    recoveryCode,
     setPriceStep,
     setQuantity,
     setSalt,
+    setRecoveryCode,
     selectAuction: setSelectedId,
     selected,
     myBid,
@@ -545,7 +572,7 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
     createAuction,
   }), [
     account, mon, chainId, auctions, bids, mySlot, now, loading, busy, error, status,
-    priceStep, quantity, salt, selected, myBid, quotedPrice,
+    priceStep, quantity, salt, recoveryCode, selected, myBid, quotedPrice,
   ]);
 
   return <AuctionContext.Provider value={value}>{children}</AuctionContext.Provider>;

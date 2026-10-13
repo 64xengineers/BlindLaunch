@@ -1,4 +1,5 @@
 import {
+  concat,
   createPublicClient,
   createWalletClient,
   custom,
@@ -52,13 +53,17 @@ export function saltMessage(auctionId: bigint): string {
     `Contract: ${auctionAddress}`,
     `Chain: ${monadTestnet.id}`,
     "",
-    "Signing is free and sends no transaction. The signature becomes the secret salt for your sealed bid, so this wallet can recover it on any device. Only sign this on Blindlaunch.",
+    "Signing is free and sends no transaction. Together with your recovery code, this signature unlocks your sealed bid. Never sign this message on any other site.",
   ].join("\n");
 }
 
 export async function deriveSalt(account: Address, auctionId: bigint): Promise<`0x${string}`> {
   const signature = await walletClient(account).signMessage({ account, message: saltMessage(auctionId) });
   return keccak256(signature);
+}
+
+export function combineSalt(signatureSalt: `0x${string}`, recoveryCode: `0x${string}`): `0x${string}` {
+  return keccak256(concat([signatureSalt, recoveryCode]));
 }
 
 export function saltKey(auctionId: string, account: string): string {
