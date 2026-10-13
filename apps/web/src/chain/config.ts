@@ -12,6 +12,8 @@ export type Network = {
   faucet: string | null;
   /** Kuru's trading app, where launched tokens trade. None on a local chain. */
   kuruApp: string | null;
+  /** On Monad mainnet only Kuru may create a market, so a launch seeds into the market Kuru lists (`seedInto`). */
+  onlyKuruCreatesMarkets: boolean;
   deployment: Deployment | null;
   /** Quote tokens the Create page offers. A quote token the authority controls could withhold refunds. */
   quoteTokens: Address[];
@@ -52,7 +54,8 @@ export function networkFor(name: NetworkName, available: Record<string, unknown>
   const deployment = deploymentFor(definition.id, available);
   const quoteTokens = name === "mainnet" ? [MAINNET_USDC] : deployment ? [deployment.quote] : [];
   const kuruApp = name === "local" ? null : "https://www.kuru.io";
-  return { name, label: definition.label, chain, rpcUrl, explorer: definition.explorer, faucet: definition.faucet, kuruApp, deployment, quoteTokens };
+  const onlyKuruCreatesMarkets = name === "mainnet";
+  return { name, label: definition.label, chain, rpcUrl, explorer: definition.explorer, faucet: definition.faucet, kuruApp, onlyKuruCreatesMarkets, deployment, quoteTokens };
 }
 
 function selected(): NetworkName {

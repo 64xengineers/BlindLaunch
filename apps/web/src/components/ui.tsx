@@ -2,6 +2,8 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { explorerUrl, network } from "../chain/config";
 import { Hush, Icon, type IconName } from "./art";
+import { useToast } from "../state/hooks";
+import { calmSetting, setCalm, setSound, sfx, soundSetting } from "../state/motion";
 
 export { Hush, Icon, TokenArt, ComicArt } from "./art";
 
@@ -337,10 +339,43 @@ export function Footer() {
             <a key={label} className="label inline-flex min-h-10 items-center no-underline hover:!text-cyan" href={href} target="_blank" rel="noreferrer">{label}</a>
           ))}
         </nav>
+        <ViewToggles />
       </div>
       <p className="mx-auto m-0 max-w-[1360px] px-8 pb-6 text-sm text-muted">
         {network.name === "mainnet" ? "Not audited. Use small amounts." : "Test network build. Not audited. Test tokens only."} Not financial advice.
       </p>
     </footer>
+  );
+}
+
+/** Calm mode and sound switches (spec 5.20): 44px icon buttons, saved per browser. */
+export function ViewToggles() {
+  const { notify } = useToast();
+  const [calmOn, setCalmOn] = useState(calmSetting);
+  const [soundOn, setSoundOn] = useState(soundSetting);
+  const toggleCalm = () => {
+    const next = !calmOn;
+    setCalm(next);
+    setCalmOn(next);
+    if (next) notify("Calm mode on. No shakes, glitches or confetti.");
+  };
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSound(next);
+    setSoundOn(next);
+    if (next) {
+      notify("Sound on.");
+      sfx("tap");
+    }
+  };
+  return (
+    <div className="flex items-center gap-2" role="group" aria-label="Page settings">
+      <button id="toggle-calm" type="button" className="view-toggle" aria-pressed={calmOn} aria-label="Calm mode" title={calmOn ? "Calm mode is on: no motion" : "Calm mode: turn off motion"} onClick={toggleCalm}>
+        <Icon name={calmOn ? "flat-line" : "wave"} size={22} />
+      </button>
+      <button id="toggle-sound" type="button" className="view-toggle" aria-pressed={soundOn} aria-label="Sound" title={soundOn ? "Sound is on" : "Sound is off"} onClick={toggleSound}>
+        <Icon name={soundOn ? "speaker" : "speaker-off"} size={22} />
+      </button>
+    </div>
   );
 }

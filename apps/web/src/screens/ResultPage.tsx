@@ -1,8 +1,8 @@
 import { allocationOf } from "@blindlaunch/sealed-bid";
 import { openConnect } from "../state/connect";
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
-import { formatUnits, type Address } from "viem";
+import { formatUnits, isAddress, type Address } from "viem";
 import { useSession } from "../auth/session";
 import { reads } from "../chain/clients";
 import { explorerUrl, network } from "../chain/config";
@@ -10,7 +10,7 @@ import { formatAmount, shortAddress } from "../chain/format";
 import { lotLabel, phaseOf, priceAt, SEED, STATUS, type AuctionView, type BidView, type TokenMeta } from "../chain/model";
 import { outcomeOf, VerifyLinks } from "../components/auction";
 import { Bubble, CopyButton, Fold, Hush, Icon, Meter, Panel, PrimaryButton, SecondaryButton, Stat, TokenArt, Tracker } from "../components/ui";
-import { callAuction, claimLeg, openMarket, seedCall } from "../state/actions";
+import { callAuction, claimLeg, openMarket, seedCall, seedIntoMarket } from "../state/actions";
 import { useNow, usePolling, useRunner } from "../state/hooks";
 import { calm, confetti, useCountUp, useDecode } from "../state/motion";
 import { NotFound } from "./NotFound";
@@ -59,7 +59,8 @@ export function lootOf(auction: AuctionView, bid: BidView): Loot {
   const paid = lots * auction.clearingPrice;
   const got = { ...none, tokens: lots * auction.lotSize, paid, back: auction.deposit - paid, percent: bid.quantity > 0n ? Number((lots * 100n) / bid.quantity) : 0 };
   if (!bid.counted) return { ...got, kind: "refund", uncounted: true };
-  if (lots === 0n) return { ...got, kind: "missed" };
+  // A bid at the final price whose share rounds down to nothing was crowded out, not priced out.
+  if (lots === 0n) return { ...got, kind: bid.step >= auction.clearingStep ? "fair" : "missed" };
   return { ...got, kind: lots < bid.quantity ? "fair" : "won" };
 }
 
@@ -247,6 +248,13 @@ function KuruCard({ auction, position, now, onDone }: { auction: AuctionView; po
   const canUnwind = position.accepted && !position.unwound && !locked;
   const price = priceText(auction.clearingPrice, quote);
   const setAside = `${tokens(auction.seedSale, sale)} and ${money(auction.seedQuote, quote)}`;
+  const notStarted = reserved || waiting;
+  /** Mainnet: only Kuru creates markets, so the launch seeds the market Kuru lists. Elsewhere anyone can start one. */
+  const kuruOnly = network.onlyKuruCreatesMarkets;
+  const [marketInput, setMarketInput] = useState("");
+  const [marketTried, setMarketTried] = useState(false);
+  const marketText = marketInput.trim();
+  const marketError = marketTried && !isAddress(marketText) ? "That isn't a market address. It starts with 0x and has 40 more letters and numbers." : null;
 
   let tone = "var(--color-green)";
   let icon: Parameters<typeof Icon>[0]["name"] = "arrow-up-right";
@@ -267,7 +275,7 @@ function KuruCard({ auction, position, now, onDone }: { auction: AuctionView; po
   } else if (reserved || waiting) {
     tone = "var(--color-cyan)"; icon = "play";
     title = reserved && !locked ? "Trading never started" : "Start trading on Kuru";
-    body = <>{setAside} are set aside to open trading at {price}. Anyone can press this.</>;
+    body = <>{setAside} are set aside to open trading at {price}.{kuruOnly ? "" : " Anyone can press this."}</>;
     if (reserved && !locked) note = "The lock is over, so they can also go back to the creator.";
   } else if (auction.seedState === SEED.Released) {
     tone = "var(--color-violet)"; icon = "return";
@@ -280,6 +288,13 @@ function KuruCard({ auction, position, now, onDone }: { auction: AuctionView; po
   }
 
   const action = (label: string, done: string, fn: Parameters<typeof run>[1]) => () => void run(label, fn, done).then(onDone);
+  const submitMarket = (event: FormEvent) => {
+    event.preventDefault();
+    setMarketTried(true);
+    if (!isAddress(marketText)) return;
+    const market: Address = marketText;
+    action("Use this Kuru market", `Trading is live on Kuru at ${price}.`, (w) => seedIntoMarket(w, auction.id, market))();
+  };
   return (
     <Panel className="res-strip mt-5">
       <span className="res-ic" style={{ "--ic": tone } as CSSProperties}><Icon name={icon} size={24} /></span>
@@ -292,7 +307,7 @@ function KuruCard({ auction, position, now, onDone }: { auction: AuctionView; po
         {live && network.kuruApp ? <a className="res-go" href={network.kuruApp} target="_blank" rel="noreferrer">Trade on Kuru <span className="arrow">→</span></a> : null}
         {live && network.kuruApp ? <span className="flex items-center gap-1 text-sm text-muted">Find it with {shortAddress(sale.address)}<CopyButton value={sale.address} /></span> : null}
         {live && !network.kuruApp ? <span className="flex items-center gap-1 text-sm text-muted">Test market {shortAddress(position.market)}<CopyButton value={position.market} /></span> : null}
-        {reserved || waiting ? (
+        {notStarted && !kuruOnly ? (
           <SecondaryButton icon="play" disabled={busy !== null} onClick={action("Start trading", `Trading is live on Kuru at ${price}.`, (w) => openMarket(w, auction.id))}>
             {busy === "Start trading" ? "Starting trading…" : "Start trading"}
           </SecondaryButton>
@@ -308,6 +323,35 @@ function KuruCard({ auction, position, now, onDone }: { auction: AuctionView; po
           </SecondaryButton>
         ) : null}
       </div>
+      {notStarted ? (
+        <form className="col-span-full grid gap-2" noValidate onSubmit={submitMarket}>
+          <label htmlFor="kuru-market" className="label !text-[13px]">Kuru market address</label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              id="kuru-market"
+              className="field num"
+              placeholder="0x…"
+              autoComplete="off"
+              spellCheck={false}
+              value={marketInput}
+              onChange={(event) => setMarketInput(event.target.value)}
+              onBlur={() => { if (marketText !== "") setMarketTried(true); }}
+              aria-invalid={marketError ? true : undefined}
+              aria-describedby="kuru-market-help"
+            />
+            <button type="submit" className="btn-2 shrink-0" disabled={busy !== null}>
+              <Icon name="arrow-up-right" size={18} />
+              <span>{busy === "Use this Kuru market" ? "Using this market…" : "Use this Kuru market"}</span>
+            </button>
+          </div>
+          {marketError ? <div className="cr-error" role="alert"><Icon name="alert" size={16} className="mt-0.5" />{marketError}</div> : null}
+          <small id="kuru-market-help">
+            {kuruOnly
+              ? `On Monad mainnet only Kuru can create a new market. Once Kuru lists ${sale.symbol}, paste its market address here.`
+              : `Kuru already lists ${sale.symbol}? Paste its market address here instead.`}
+          </small>
+        </form>
+      ) : null}
     </Panel>
   );
 }
@@ -350,7 +394,7 @@ function LootCard({ auction, loot, claimable, trading, onDone }: { auction: Auct
   const nothing = tokensLeft === 0n && moneyLeft === 0n;
   const collected = nothing && (loot.tokens > 0n || loot.back > 0n);
   const price = priceText(auction.clearingPrice, quote);
-  const celebrate = loot.kind === "won" || loot.kind === "fair";
+  const celebrate = (loot.kind === "won" || loot.kind === "fair") && loot.tokens > 0n;
 
   useEffect(() => {
     if (!celebrate) return;
@@ -363,7 +407,7 @@ function LootCard({ auction, loot, claimable, trading, onDone }: { auction: Auct
 
   const headline = {
     won: <>You got all {tokens(loot.tokens, sale)} at {price} each.</>,
-    fair: <>Crowded! You got {loot.percent}% of what you asked for.</>,
+    fair: loot.tokens === 0n ? <>Crowded! Your share rounded down to zero tokens.</> : <>Crowded! You got {loot.percent}% of what you asked for.</>,
     missed: <>The final price, {price}, was above your {priceText(loot.max, quote)} max.</>,
     refund: loot.uncounted ? <>Your bid did not count, so every cent comes back.</> : <>Called off. Every cent comes back.</>,
     burned: <>Your bid did not match what you locked, so its money was burned.</>,
@@ -371,7 +415,9 @@ function LootCard({ auction, loot, claimable, trading, onDone }: { auction: Auct
 
   const footnote = {
     won: loot.max > auction.clearingPrice ? <>Your max was {priceText(loot.max, quote)}. You paid less: {price} a token.</> : <>Your max was exactly the final price.</>,
-    fair: <>Lots of bids landed exactly on {price}, so each got the same slice of what it asked for.</>,
+    fair: loot.tokens === 0n
+      ? <>Lots of bids landed exactly on {price}. Shares round down, and yours came to less than one. All your money comes back.</>
+      : <>Lots of bids landed exactly on {price}, so each got the same slice of what it asked for.</>,
     missed: <>All your money comes back.{trading ? ` You can still buy ${sale.symbol} on Kuru.` : ""}</>,
     refund: null,
     burned: <>It gets burned; nobody gets it.</>,
@@ -381,7 +427,9 @@ function LootCard({ auction, loot, claimable, trading, onDone }: { auction: Auct
     ? <>All collected. <b>{[loot.tokens > 0n ? tokens(loot.tokens, sale) : null, loot.back > 0n ? money(loot.back, quote) : null].filter(Boolean).join(" and ")}</b> went to your wallet.</>
     : {
       won: <>GG. Your <b>{tokens(loot.tokens, sale)}</b> and <b>{money(loot.back, quote)}</b> back, in one tap.</>,
-      fair: <>It was crowded at the final price, so every bid there got the same slice of what it asked for. Yours: <b>{tokens(loot.tokens, sale)}.</b></>,
+      fair: loot.tokens === 0n
+        ? <>So crowded that your slice rounded down to nothing. All <b>{money(loot.back, quote)}</b> comes back.</>
+        : <>It was crowded at the final price, so every bid there got the same slice of what it asked for. Yours: <b>{tokens(loot.tokens, sale)}.</b></>,
       missed: <>The final price ended above your max. All <b>{money(loot.back, quote)}</b> comes back.</>,
       refund: <>Nobody pays anything. All <b>{money(loot.back, quote)}</b> comes back, in one tap.</>,
       burned: <>That bid did not match what was locked, so there is nothing to collect.</>,

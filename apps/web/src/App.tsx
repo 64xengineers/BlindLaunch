@@ -4,12 +4,14 @@ import { useSession } from "./auth/session";
 import { network } from "./chain/config";
 import { shortAddress } from "./chain/format";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { Intro } from "./components/intro";
 import { ArtDefs, World } from "./components/art";
 import { LiveTicker } from "./components/ticker";
 import { Footer, Navbar, Toast } from "./components/ui";
 import { useBalance, WalletPicker } from "./components/wallet";
 import { CONNECT_EVENT } from "./state/connect";
 import { useToast } from "./state/hooks";
+import { loadPrefs } from "./state/motion";
 import { AuctionPage } from "./screens/AuctionPage";
 import { CreatePage } from "./screens/CreatePage";
 import { Docs } from "./screens/Docs";
@@ -20,6 +22,9 @@ import { NotFound } from "./screens/NotFound";
 import { ResultPage } from "./screens/ResultPage";
 import { SealedPage } from "./screens/SealedPage";
 import { TeamPage } from "./screens/TeamPage";
+
+/* Calm mode and sound come from the last visit; apply them before the first paint. */
+loadPrefs();
 
 const MeraSpike = import.meta.env.DEV ? lazy(() => import("./spikes/MeraSpike").then((m) => ({ default: m.MeraSpike }))) : null;
 
@@ -72,6 +77,7 @@ export function App() {
       <Footer />
       {picker ? <WalletPicker onClose={closePicker} /> : null}
       {toast ? <Toast key={toast.id} message={toast.message} tone={toast.tone} onClose={dismiss} /> : null}
+      <Intro />
     </div>
   );
 }

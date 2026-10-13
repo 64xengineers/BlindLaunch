@@ -84,7 +84,7 @@ function rowFor(auction: AuctionView, bid: BidView | undefined, claimable: reado
       const toCollect = <><b>{left}</b> to collect.</>;
       switch (loot.kind) {
         case "won": return { sticker: "Won", tone: "yellow", line: toCollect };
-        case "fair": return { sticker: "Fair share", tone: "cyan", line: <>Crowded, so you got {loot.percent}%. {toCollect}</> };
+        case "fair": return { sticker: "Fair share", tone: "cyan", line: loot.tokens === 0n ? <>Crowded, and your share rounded down to zero. {toCollect}</> : <>Crowded, so you got {loot.percent}%. {toCollect}</> };
         case "missed": return { sticker: "Missed", tone: "coral", line: <>The final price ended above your max. {toCollect}</> };
         case "refund": return { sticker: "Money back", tone: "green", line: <>{phase === "cancelled" ? "Called off. " : "Your bid did not count. "}{toCollect}</> };
         case "burned": return { sticker: "Burned", tone: "coral", line: "This bid did not match what was locked. Its money was burned." };

@@ -573,6 +573,14 @@ function CreateScreen() {
               Kuru gets up to <b className="num">{group(form.seedTokens)} {symbol}</b> and <b className="num">{form.seedQuotePercent.trim() || "0"}%</b> of the money raised, locked <b className="num">{daysWords(form.lockDays)}</b>.
             </p>
           </div>
+          {network.onlyKuruCreatesMarkets ? (
+            <div className="cr-say">
+              <Icon name="alert" size={22} className="text-yellow" />
+              <p className="m-0">
+                On mainnet Kuru lists markets itself. Ask Kuru to list {symbol}/{qs || "the payment token"} with these settings before the sale ends; if no market exists by the end of the lock, the reserved tokens and money go back to you.
+              </p>
+            </div>
+          ) : null}
         </>
       ) : (
         <div className="cr-say">

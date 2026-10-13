@@ -55,6 +55,8 @@ export const errorMessages: Record<string, string> = {
   PriceTooLow: "The lowest price is too low for a Kuru market.",
   PriceTooHigh: "The top price is too high for a Kuru market.",
   DeployFailed: "Kuru did not create the market. Anyone can retry.",
+  NotAKuruMarket: "That address is not a Kuru market.",
+  MarketMismatch: "That Kuru market is for different tokens or settings than this launch declared.",
   NotKeeper: "Only that keeper's owner can do that.",
   AuctionAlreadySet: "The auction is already set.",
   NoKeeperKeys: "The keepers have no fresh keys right now. Try again in a minute.",

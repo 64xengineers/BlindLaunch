@@ -6,6 +6,7 @@ import { useSession } from "../auth/session";
 import { noteKey, sealNote, writeNote } from "../bids/vault";
 import { reads } from "../chain/clients";
 import { network } from "../chain/config";
+import { bidReceipt, cleanLots, lotsForSpend, lotsOf, spendPresets } from "../chain/receipt";
 import { formatAmount } from "../chain/format";
 import { bidProblem, phaseOf, priceAt, publicActions, SEED, STATUS, type AuctionView, type BidView, type Phase } from "../chain/model";
 import { AuctionRules, BidList, moneyText, PhaseSticker, priceText, Tip, tokensText, trackerOf, VerifyLinks, wholeLots } from "../components/auction";
@@ -218,8 +219,6 @@ function LaunchSide({ auction, phase, now, mood, hushRef, trading = false }: { a
 
 type Stage = "idle" | "clamping" | "locked";
 
-const amountSteps = [100n, 250n, 500n];
-
 /** Balanced rows: 16 options make two rows of 8, not 6 + 6 + 4. Many options get smaller chips and a scroll box. */
 function priceColumns(count: number): { cols: number; density: string } {
   if (count <= 6) return { cols: count, density: "" };
@@ -254,15 +253,10 @@ function BidCard({ auction, account, alreadyBid, now, onDone, hushRef, setMood, 
 
   const { quote, sale } = auction;
   const dollars = /usd/i.test(quote.symbol);
-  const unit = 10n ** BigInt(quote.decimals);
-  const cap = auction.deposit < auction.maxNotional ? auction.deposit : auction.maxNotional;
   const count = Math.min(auction.stepCount, 64);
   const whole = wholeLots(auction, sale);
-  const presets = [
-    ...amountSteps.filter((amount) => amount * unit < cap).map((amount) => ({ key: String(amount), label: dollars ? `$${amount}` : `${amount}`, spend: amount * unit })),
-    { key: "max", label: "MAX", spend: cap },
-  ];
-  const lotsFor = (spend: bigint, at: number) => spend / priceAt(auction, at);
+  const presets = spendPresets(auction, quote);
+  const lotsFor = (spend: bigint, at: number) => lotsForSpend(auction, spend, at);
   const firstStep = Math.min(count - 1, Math.floor((auction.stepCount - 1) / 2));
   const firstPreset = presets.some((preset) => preset.key === "500") ? "500" : "max";
 
@@ -270,12 +264,8 @@ function BidCard({ auction, account, alreadyBid, now, onDone, hushRef, setMood, 
   const [preset, setPreset] = useState<string | null>(firstPreset);
   const [lotsText, setLotsText] = useState(() => String(lotsFor(presets.find((p) => p.key === firstPreset)!.spend, firstStep)));
 
-  const lots = /^\d+$/.test(lotsText) ? BigInt(lotsText) : 0n;
-  const price = priceAt(auction, step);
-  const maxPay = price * lots;
-  const maxLots = cap / price;
-  const over = lots > 0n && maxPay > cap;
-  const valid = lots > 0n && !over;
+  const lots = lotsOf(lotsText);
+  const { cap, price, tokens, maxPay, maxLots, back, over, valid } = bidReceipt(auction, step, lots);
   const problem = bidProblem(auction, { account, alreadyBid, now, step, lots });
   const short = balance !== undefined && balance < auction.deposit;
   const testQuote = isTestQuote(auction);
@@ -313,7 +303,7 @@ function BidCard({ auction, account, alreadyBid, now, onDone, hushRef, setMood, 
 
   function typeLots(text: string) {
     // Whole tokens only: "12.5" means 12, never 125.
-    const clean = (text.replace(/[,\s_]/g, "").split(".")[0] ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+    const clean = cleanLots(text);
     setLotsText(clean);
     const match = presets.find((p) => clean !== "" && lotsFor(p.spend, step) === BigInt(clean));
     setPreset(match ? match.key : null);
@@ -372,7 +362,6 @@ function BidCard({ auction, account, alreadyBid, now, onDone, hushRef, setMood, 
     dollars ? `$${shown.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${shown.toLocaleString("en-US", { maximumFractionDigits: 4 })} ${quote.symbol}`;
   const tokensFloat = (shown: number) => `${shown.toLocaleString("en-US", { maximumFractionDigits: whole ? 0 : 4 })} ${sale.symbol}`;
   const asNumber = (value: bigint, decimals: number) => Number(formatUnits(value, decimals));
-  const back = auction.deposit - maxPay;
   const { cols, density } = priceColumns(count);
   const getTest = account !== null && short && testQuote;
   const locked = stage !== "idle";
@@ -476,7 +465,7 @@ function BidCard({ auction, account, alreadyBid, now, onDone, hushRef, setMood, 
       <div ref={wrapRef} className="au-receipt-wrap">
         <Receipt id="receipt" title="Your receipt" aside="locked now, settled later">
           <ReceiptRow icon="lock" tone="violet" label="You lock now (same for everyone)" value={money(auction.deposit)} />
-          <ReceiptRow icon="coin" tone="cyan" label="You get up to" value={valid ? <Rolling value={asNumber(lots * auction.lotSize, sale.decimals)} exact={tokensText(auction, lots)} format={tokensFloat} /> : "–"} />
+          <ReceiptRow icon="coin" tone="cyan" label="You get up to" value={valid ? <Rolling value={asNumber(tokens, sale.decimals)} exact={tokensText(auction, lots)} format={tokensFloat} /> : "–"} />
           <ReceiptRow icon="dollar" tone="yellow" label="You pay at most" value={valid ? <Rolling value={asNumber(maxPay, quote.decimals)} exact={money(maxPay)} format={moneyFloat} /> : "–"} />
           <ReceiptRow icon="return" tone="green" label="Comes back for sure" value={valid && back >= 0n ? <Rolling value={asNumber(back, quote.decimals)} exact={money(back)} format={moneyFloat} /> : "–"} />
           <p className="au-fine">{valid ? "If the final price is lower, you pay less." : "Pick a price and an amount to see your bid."}</p>
