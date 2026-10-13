@@ -229,6 +229,20 @@ Exit: addresses in `deployments/testnet.json`; run log (tx hashes) appended to `
 
 Tests added in phase 3: web 26 (chain 17, state 3, auth and notes 5, anvil end to end 1 covering create token, plan, approve, create, three sealed bids, a rejected second bid, open, settle, market, claims, reclaim, unwind and zero residual balances); `sealed-bid` +4 (`verifySealed`, `openBatches`); `MarketSeeder.t.sol` +1. Visual check: every route rendered in headless Chrome against a seeded local chain (`apps/web/scripts/local-demo.ts`), screenshots at 1366 and 500 px.
 
+## Phase 3b: Blind Run redesign (13 Oct 2026)
+
+The owner rejected the phase 3 look ("the charts make no sense"; users are impatient traders who want plain answers) and asked for a Cyberpunk-styled, gaming, cartoon redesign with motion, laptop screens first, built by a researcher, a designer, builders and a critic.
+
+| Step | Output |
+| --- | --- |
+| Research | `design/cyberpunk/research.md`: palette, type, motion catalogue, degen UX patterns, plain-word glossary, flashing and IP limits. |
+| Design | `design/cyberpunk/design-spec.md` ("Blind Run"): tokens, mascot Hush, components, motion, exact copy per screen. `design/cyberpunk/brief.md` holds the product rules the design must fit. |
+| First look | `design/cyberpunk/first-look/`: laptop screens for a live launch and a win. Approved by the owner. |
+| Build | Foundation (tokens, HUD components, Hush and token art, ticker, motion helpers, `openConnect` event) then four parallel builders: Home and info pages; launch and bid flow with the lock animation; result loot card and lists; Create wizard and the sign-in modal. Every chart and simulator was removed. |
+| Critique | 15 findings, all fixed: Kuru card linked to the explorer and had an unexplained lock; the bid receipt did not say the full bid money is locked now; "Bid locked" showed to non-bidders; the crowded-sale wording was wrong (bids above the final price fill in full, bids at it get the same share of what they asked); "12.5" tokens became 125; plus wording, counts and motion polish. |
+
+Not yet checked: phone layouts (out of scope for now) and Kuru's deep link to a market page (the button opens Kuru's app; the token address is shown to search for).
+
 ## Phase 3: Web application
 
 Prerequisite: Mera matrix in `spikes.md` run on at least desktop Chrome and iPhone Safari.
