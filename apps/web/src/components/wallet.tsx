@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { formatEther } from "viem";
 import { useSession } from "../auth/session";
 import { publicClient } from "../chain/clients";
 import { network } from "../chain/config";
 import { shortAddress } from "../chain/format";
 import { friendlyError } from "../state/errors";
-import { useToast } from "../state/hooks";
-import { CopyButton } from "./ui";
+import { CopyButton, Hush, Icon, SecondaryButton, Sticker } from "./ui";
 
 export function useBalance(): string {
   const { signer } = useSession();
@@ -28,83 +28,141 @@ export function useBalance(): string {
   return balance;
 }
 
-export function WalletPicker({ onClose }: { onClose: () => void }) {
+const FOCUSABLE = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+/** The Connect modal: a passkey (no app needed) or a browser wallet; when signed in, the account and Disconnect. */
+export function WalletPicker({ onClose, title }: { onClose: () => void; title?: string }) {
   const { signer, wallets, connectWallet, signInWithPasskey, disconnect } = useSession();
-  const { notify } = useToast();
   const balance = useBalance();
   const [pending, setPending] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const dialog = useRef<HTMLDivElement>(null);
+
+  // Focus moves into the dialog and returns to whatever opened it.
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog.current?.focus();
+    return () => opener?.focus();
+  }, []);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key !== "Tab" || !dialog.current) return;
+      const items = Array.from(dialog.current.querySelectorAll<HTMLElement>(FOCUSABLE));
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) return;
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   async function attempt(label: string, action: () => Promise<void>) {
     setPending(label);
+    setProblem(null);
     try {
       await action();
       onClose();
     } catch (error) {
-      notify(friendlyError(error), "error");
+      setProblem(friendlyError(error));
     } finally {
       setPending(null);
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Wallet" onClick={onClose}>
-      <div className="glass toast w-full max-w-md p-5 sm:p-6" onClick={(event) => event.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold">{signer ? "Your account" : "Connect"}</h2>
-          <button type="button" className="min-h-11 px-2 text-lilac hover:text-paper" aria-label="Close" onClick={onClose}>✕</button>
-        </div>
-        {signer ? (
-          <div className="mt-4 grid gap-3 text-sm">
-            <div className="flex items-center justify-between gap-2 rounded-xl bg-white/[0.04] px-3 py-2">
-              <span className="font-mono text-paper">{shortAddress(signer.address)}</span>
-              <CopyButton value={signer.address} />
-            </div>
-            <p className="text-mist">
-              {signer.kind === "passkey" ? "Signed in with a passkey. Your key exists only in memory and is recreated from the passkey next time." : `Connected with ${signer.wallet.info.name}.`}
-            </p>
-            <p className="text-mist">Balance: <span className="font-mono text-paper">{balance ? Number(balance).toFixed(4) : "…"} MON</span></p>
-            {signer.kind === "passkey" && balance !== "" && Number(balance) === 0 ? (
-              <p className="rounded-xl border border-amber/40 bg-amber/10 p-3 text-paper">
-                This account needs MON for gas.{" "}
-                {network.faucet ? <a className="text-amber" href={network.faucet} target="_blank" rel="noreferrer">Get some from the faucet</a> : "Send it some MON"}{" "}
-                and paste the address above.
+  const pose = problem ? "error" : pending ? "waiting" : "idle";
+  const waitingFor = pending === "passkey" ? "Waiting for Face ID or fingerprint" : pending === "create" ? "Making your passkey" : `Waiting for ${pending ?? "your wallet"}`;
+
+  // Portalled to <body> so it sits above the top bar wherever it is opened from.
+  return createPortal(
+    <div className="scrim cn-scrim" onClick={onClose}>
+      <div ref={dialog} tabIndex={-1} className="modal cn-wrap" role="dialog" aria-modal="true" aria-labelledby="connect-title" onClick={(event) => event.stopPropagation()}>
+        <div className="panel panel-lg cn">
+          <div className="cn-head">
+            <Hush pose={pose} size={60} className={pose === "idle" ? "bob" : ""} />
+            <h2 id="connect-title">{signer ? "Your account" : title ?? "Sign in"}</h2>
+            <button type="button" id="connect-close" className="cn-x" aria-label="Close" onClick={onClose}><Icon name="x" size={20} /></button>
+          </div>
+
+          {signer ? (
+            <div className="grid gap-4">
+              <div className="cn-addr">
+                <Icon name={signer.kind === "passkey" ? "fingerprint" : "wallet"} size={22} className="text-cyan" />
+                <span className="flex-1 font-mono text-[17px] text-paper">{shortAddress(signer.address)}</span>
+                <CopyButton value={signer.address} />
+              </div>
+              <p className="m-0 text-[15px] text-muted">
+                {signer.kind === "passkey" ? "Signed in with a passkey. Your key exists only in memory and is recreated from the passkey next time." : `Connected with ${signer.wallet.info.name}.`}
               </p>
-            ) : null}
-            <button type="button" className="btn-secondary min-h-11" onClick={() => { disconnect(); onClose(); }}>Disconnect</button>
-          </div>
-        ) : (
-          <div className="mt-4 grid gap-2">
-            {wallets.map((wallet) => (
-              <button
-                key={wallet.info.rdns}
-                type="button"
-                className="flex min-h-12 items-center gap-3 rounded-xl border border-white/15 bg-white/[0.04] px-4 text-left text-paper transition-colors hover:border-lavender hover:bg-white/10"
-                disabled={pending !== null}
-                onClick={() => void attempt(wallet.info.name, () => connectWallet(wallet.info.rdns))}
-              >
-                {wallet.info.icon ? <img src={wallet.info.icon} alt="" className="h-6 w-6 rounded" /> : <span className="h-6 w-6 rounded bg-white/10" />}
-                <span className="flex-1">{wallet.info.name}</span>
-                {pending === wallet.info.name ? <span className="text-xs text-lilac">Check your wallet…</span> : null}
-              </button>
-            ))}
-            {wallets.length === 0 ? <p className="text-sm text-lilac">No browser wallet found. Use a passkey instead, or install a wallet.</p> : null}
-            <div className="my-2 h-px bg-white/10" />
-            <p className="text-sm text-mist">No wallet? Use Face ID, Touch ID or your device PIN. No seed phrase.</p>
-            <button type="button" className="btn-primary min-h-12" disabled={pending !== null} onClick={() => void attempt("passkey", () => signInWithPasskey("signIn"))}>
-              <span className="relative z-10">{pending === "passkey" ? "Waiting for your passkey…" : "Sign in with a passkey"}</span>
-            </button>
-            <button type="button" className="btn-secondary min-h-11" disabled={pending !== null} onClick={() => void attempt("create", () => signInWithPasskey("create"))}>
-              {pending === "create" ? "Creating…" : "Create a passkey account"}
-            </button>
-          </div>
-        )}
+              <div className="cn-bal">
+                <span className="label">Balance for gas</span>
+                <b className="num">{balance ? Number(balance).toFixed(4) : "…"} <span className="text-[15px] text-muted">MON</span></b>
+              </div>
+              {signer.kind === "passkey" && balance !== "" && Number(balance) === 0 ? (
+                <p className="cn-warn">
+                  This account needs MON for gas.{" "}
+                  {network.faucet ? <a className="font-bold text-yellow" href={network.faucet} target="_blank" rel="noreferrer">Get some from the faucet</a> : "Send it some MON"}{" "}
+                  and paste the address above.
+                </p>
+              ) : null}
+              <SecondaryButton icon="return" className="w-full" onClick={() => { disconnect(); onClose(); }}>Disconnect</SecondaryButton>
+            </div>
+          ) : (
+            <>
+              {problem ? <p className="cn-problem" role="alert"><Icon name="alert" size={18} className="mt-0.5" />{problem}</p> : null}
+              {pending ? (
+                <div className="cn-boot" aria-live="polite">
+                  <p>&gt; {waitingFor}<span className="cn-dots" aria-hidden="true"><i /><i /><i /></span></p>
+                  <p className="text-muted">&gt; Check the prompt on your screen.</p>
+                </div>
+              ) : (
+                <div className="grid gap-6">
+                  <div className="grid gap-2">
+                    <button type="button" className="cn-opt cn-pass cr-cut" onClick={() => void attempt("passkey", () => signInWithPasskey("signIn"))}>
+                      <span className="cn-ic"><Icon name="fingerprint" size={30} /></span>
+                      <span className="min-w-0"><b>Use a passkey</b><small>Face ID or fingerprint. No wallet app needed.</small></span>
+                      <Icon name="chevron-right" size={24} />
+                      <Sticker tone="cyan" className="cn-sticker">No app needed</Sticker>
+                    </button>
+                    <button type="button" className="cn-link" onClick={() => void attempt("create", () => signInWithPasskey("create"))}>
+                      First time here? <span>Make a passkey account</span>
+                    </button>
+                  </div>
+                  <div className="cn-opt cn-wallet cr-cut">
+                    <div className="cn-wallet-head">
+                      <span className="cn-ic"><Icon name="wallet" size={28} /></span>
+                      <span className="min-w-0"><b>Use a wallet</b><small>MetaMask, Rabby and others.</small></span>
+                    </div>
+                    {wallets.length > 0 ? (
+                      <div className="grid gap-2">
+                        {wallets.map((wallet) => (
+                          <button key={wallet.info.rdns} type="button" className="cn-row" onClick={() => void attempt(wallet.info.name, () => connectWallet(wallet.info.rdns))}>
+                            {wallet.info.icon ? <img src={wallet.info.icon} alt="" className="h-7 w-7" /> : <span className="h-7 w-7 bg-panel" />}
+                            <span className="flex-1 truncate">{wallet.info.name}</span>
+                            <Icon name="chevron-right" size={20} className="text-cyan" />
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="m-0 text-[15px] text-muted">No wallet found in this browser. Use a passkey, or install a wallet like MetaMask or Rabby.</p>
+                    )}
+                  </div>
+                  <p className="cn-foot"><Icon name="shield" size={16} className="text-green" />Blindlaunch never sees your keys.</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

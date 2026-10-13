@@ -239,7 +239,7 @@ export function Navbar({ account, mon, onConnect }: { account: string | null; mo
   useEffect(() => setOpen(false), [pathname]);
 
   const tab = ({ isActive }: { isActive: boolean }) =>
-    `inline-flex h-11 items-center px-4 text-[15px] font-bold uppercase tracking-[0.08em] no-underline transition-colors ${
+    `inline-flex h-11 shrink-0 items-center whitespace-nowrap px-3.5 text-[15px] font-bold uppercase tracking-[0.08em] no-underline transition-colors ${
       isActive ? "bg-panel text-paper shadow-[inset_0_-3px_0_var(--color-cyan)]" : "text-muted hover:text-cyan"
     }`;
 
@@ -250,20 +250,20 @@ export function Navbar({ account, mon, onConnect }: { account: string | null; mo
           <Hush pose="idle" size={36} head />
           <Wordmark />
         </Link>
-        <nav className="hidden items-center gap-1 lg:flex" aria-label="Primary">
+        <nav className="hidden shrink-0 items-center gap-1 lg:flex" aria-label="Primary">
           {navItems.map(([to, label]) => <NavLink key={to} end className={tab} to={to}>{label}</NavLink>)}
         </nav>
         <div className="flex-1" />
-        <span className="label hidden items-center gap-2 !text-green sm:inline-flex">
+        <span className="label hidden shrink-0 items-center gap-2 whitespace-nowrap !text-green sm:inline-flex">
           <span className="inline-block h-2.5 w-2.5 rotate-45 bg-green" aria-hidden="true" />
           {network.label}
         </span>
-        <button type="button" className="btn-2 !min-h-11 !normal-case !tracking-normal" onClick={onConnect}>
+        <button type="button" className="btn-2 !min-h-11 shrink-0 whitespace-nowrap !normal-case !tracking-normal" onClick={onConnect}>
           <Icon name={account ? "wallet" : "fingerprint"} size={18} />
           {account ? (
             <>
               <span className="num text-[15px]">{account}</span>
-              {mon ? <span className="num hidden text-green xl:inline">{Number(mon).toFixed(2)} MON</span> : null}
+              {mon ? <span className="num hidden text-green 2xl:inline">{Number(mon).toFixed(2)} MON</span> : null}
             </>
           ) : (
             <span className="uppercase tracking-[0.06em]">Connect</span>
