@@ -2,12 +2,15 @@
  * Fills a local anvil chain with demo data for the web app: one auction that is settled with a
  * Kuru (mock) market, and one that is open for bids. Run after `contracts/script/LocalStack.s.sol`:
  *
- *   anvil &
+ *   anvil --port 18600 --block-time 1 &
  *   (cd contracts && MONAD_PRIVATE_KEY=<anvil 0> KEEPER0_OWNER=<anvil 1> KEEPER1_OWNER=<anvil 2> \
  *     KEEPER2_OWNER=<anvil 3> forge script script/LocalStack.s.sol:LocalStack --sig "runLocal()" \
- *     --rpc-url http://127.0.0.1:8545 --broadcast)
- *   pnpm --filter @blindlaunch/web demo:local
+ *     --rpc-url http://127.0.0.1:18600 --broadcast)
+ *   RPC_URL=http://127.0.0.1:18600 pnpm --filter @blindlaunch/web demo:local
+ *   VITE_RPC_URL=http://127.0.0.1:18600 pnpm --filter @blindlaunch/web dev
  *
+ * `--block-time 1` matters: the app's clock follows the latest block, and an anvil that only mines
+ * on transactions would freeze every countdown at the last transaction's time.
  * It plays the keepers itself with fixed keys, so it needs no keeper processes. Never point it at
  * a real network: it time-travels the chain.
  */
