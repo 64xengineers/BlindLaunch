@@ -344,6 +344,3 @@ export function Footer() {
     </footer>
   );
 }
-
-/* Older widgets still referenced while the screens move over; removed once nothing uses them. */
-export { StepChart, Vault } from "./legacy";
