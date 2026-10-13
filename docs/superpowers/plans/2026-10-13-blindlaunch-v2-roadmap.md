@@ -13,7 +13,8 @@
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0 | Spikes, hygiene, CI | Done on branch `v2/phase-0-1`. Mera device matrix not yet run (needs a person with a passkey device). |
-| 1 | `@blindlaunch/sealed-bid`, v2 contracts, full test suite | Done on branch `v2/phase-0-1`. 112 Foundry tests, 30 Vitest tests. |
+| 1 | `@blindlaunch/sealed-bid`, v2 contracts, full test suite | Done on branch `v2/phase-0-1`. |
+| 1b | Fixes for the independent audit (H1, H2, H3, M1, M2, M3, L1, L2, I2, I4) | Done on branch `v2/phase-0-1`. 133 Foundry tests, 37 Vitest tests. |
 | 2 | Market seeder, deploy scripts, keeper service, testnet deployment | Next |
 | 3 | Web app rebuild | After phase 2 testnet deployment |
 | 4 | Mainnet, docs, demo | After phase 3 |
@@ -32,6 +33,31 @@ Dependency order: 2.1 → 2.2 → 2.4; 2.3 can run in parallel with 2.1; 3.x nee
 | Task 1.19 | `reference` is a reserved word. | Renamed to `v1Clearing`. |
 | Task 1.19 | Measured gas: 45,271 per opened bid (batches of 50), 295,296 to settle and tally 200 pro-rata bids. | Bounds 57,000 and 370,000 in `Gas.t.sol`. |
 | Task 0.5 | `@scure/bip39` 1.6.0 exports `wordlists/english` without `.js`; WebCrypto needs `Uint8Array<ArrayBuffer>`. | Recorded in `spikes.md`. |
+| Task 2.0 | Order ids: `s_orderIdCounter()` after posting, verified by `s_orders(id)`; cancel and withdraw return the deposit. | Recorded in `spikes.md`; done ahead of phase 2. |
+
+## Phase 1b: audit fixes (done)
+
+An independent audit of the spec and the phase 0-1 plan found three high, five medium, seven low and four informational items, each high and medium with a passing proof of concept. All fixes are in commit `0c8c977` and the spec's revision log (section 15).
+
+| Finding | Fix | Regression test |
+| --- | --- | --- |
+| H1 hostile sale token bricks `settle`, deposits locked | `settle` reads storage only; seed reserved, then `handOffSeed` (retryable) or `releaseSeed` after the lock | `Seed.t.sol::test_hostileSaleTokenCannotLockDeposits` |
+| H2 pair chosen after reading bids | Commitment mismatch forfeits the deposit to `0x…dEaD` via `burnForfeits` | `Open.t.sol::test_inconsistentSharesDependOnTheFrozenPairOnly`, `Claim.t.sol::test_forfeitedBidGetsNothingAndIsBurned` |
+| H3 floor rounding sells nothing / sybil halves sale | Cumulative rounding by opening order (`Bid.prefix`); `tally` removed | `Settle.t.sol::test_oneLotTwoBiddersSellsTheLot`, `test_oneLotSybilCannotShrinkTheSale`, `test_manySmallBidsAtTheClearingStepSellEverything` |
+| M1 paused sale token blocks quote refund | `claimRefund` / `claimTokens`, `reclaimUnsold` / `reclaimProceeds` | `Claim.t.sol::test_pausedSaleTokenDoesNotBlockRefund` |
+| M2 trust statement overstated | Rewritten (spec 3.8) | docs |
+| M3 keeper broadcasts key early | Keeper rule: simulate, gate on latest block time (spec 6) | phase 2 K3 |
+| M4, M5 slot filling, key drain | Documented; keepers skip zero-bid auctions; commit fee and creation bond are future work | phase 2 K3 |
+| L1 duplicate keeper keys | Registry `used` set | `KeeperRegistry.t.sol::test_rejectsDuplicateKeysWithinAndAcrossKeepers` |
+| L2 zero owner, no skip | `ZeroOwner`, `skip(i, count)` | `test_rejectsZeroOwner`, `test_ownerCanSkipCompromisedKeys` |
+| L4 allowance left after hand-off | `handOffSeed` requires both allowances back to 0 | `Seed.t.sol::test_handOffMovesExactAmountsAndReclaimExcludesThem` |
+| L5 `seal` trusts its keys | `seal` rejects invalid keys | `seal.test.ts` "refuses invalid keeper keys" |
+| L6 `via_ir` fallback would change v1 bytecode | Never used; tests restructured instead | — |
+| I2 commitment not domain-bound | `h` includes chain id and contract address | `bid.test.ts`, `Vectors.t.sol` |
+| I4 ecrecover trick unverified on Monad | `cast call 0x01` returns `addr(2·G)` on testnet and mainnet | recorded in spec 3.4 |
+| Missing tests | `Guards.t.sol` (every entry point on a missing auction, open after settle, bad share in a batch, swapped shares, key 0 and ≥ n, double cancel, EOA sale token, key rollback, payout events, boundaries), on-curve x ≥ n, settle cost independent of bid count, vectors freshness test | as listed |
+
+Measured after the fixes: 42,453 gas per opened bid (batches of 50); `settle` 102,412 gas with 2 bids and with 200 bids.
 
 ---
 
@@ -128,11 +154,12 @@ src/chain.ts        viem public + wallet clients, explicit nonce manager, retry 
 src/abi.ts          generated from contracts/out (BlindAuctionV2, KeeperRegistry, MarketSeeder)
 src/topUp.ts        available(index) < target → generate keys (sealed-bid randomScalar/mulBase), store, enqueue
 src/scan.ts         getLogs(AuctionCreated, KeyConsumed) from cursor in 2,000-block windows
-src/publish.ts      for my consumed keys whose auction passed commitDeadline and is Open: publishKey
+src/publish.ts      for my consumed keys whose auction is Open, has bids, fewer than 2 keys, and whose
+                    commitDeadline ≤ latest block timestamp < cancelAfter: simulate, then publishKey
 src/open.ts         for Open auctions with publishedCount = 2: read unopened bids, sharedPoint(sk, R)
                     for the frozen pair from published keys, openMany in batches of 50
-src/settle.ts       canSettle → settle; Settled && !finalized → tally(500) until finalized;
-                    seeder pending → seed
+src/settle.ts       canSettle → settle; seedState Reserved → handOffSeed; forfeits → burnForfeits;
+                    seeder pending → seeder.seed
 src/loop.ts         one pass = topUp, scan, publish, open, settle; sleep POLL_MS; --once runs one pass
 src/cli.ts          entry: `pnpm --filter @blindlaunch/keeper start [--once]`
 ```
@@ -145,11 +172,11 @@ Test cases (Vitest; the e2e runs against a local anvil started by the test, with
 | --- | --- | --- |
 | K1 | keystore round trip, file mode 600, atomic write survives a crash mid-write (temp file then rename) | reload equals saved |
 | K2 | topUp enqueues `QUEUE_TARGET − available` keys and stores every secret before sending the tx | registry `available` = target |
-| K3 | publish skips auctions before deadline, after `cancelAfter`, already published, or with 2 keys | no tx |
+| K3 | publish skips auctions with no bids, before the deadline **by latest block time** (local clock ahead of chain), after `cancelAfter`, already published, or with 2 keys; never broadcasts a transaction whose simulation reverts | no tx, and no `publishKey` calldata in any mined block |
 | K4 | publish sends exactly one tx for an eligible auction; second pass is a no-op | idempotent |
 | K5 | open computes the same shared points as `sealed-bid` `openBid` | equal |
 | K6 | open batches 120 bids as 50/50/20 | 3 txs |
-| K7 | settle then tally until finalized for a 300-bid pro-rata auction | finalized |
+| K7 | settle, handOffSeed and burnForfeits for a 300-bid pro-rata auction with one forfeited bid | settled, seed handed off, forfeit burned |
 | K8 | e2e: create auction, 5 bidders seal with `sealed-bid`, warp past deadline, run keepers 0 and 2 with `--once` | settled, finalized, allocations equal `clearing.ts` prediction |
 | K9 | e2e restart safety: run every keeper `--once` twice more | no tx sent |
 | K10 | e2e liveness: only keeper 1 alive past `cancelAfter` | auction stays Open with 1 key, `cancel` succeeds, refunds paid |
@@ -193,7 +220,7 @@ Tests: A1 EIP-6963 announcements dedupe by `rdns`; A2 reconnect uses `eth_accoun
 
 Files: `bids/seal.ts` (wraps `sealed-bid` `seal` with the auction's keeper keys), `bids/vault.ts` (AES-GCM with the vault key), `bids/storage.ts` (records keyed by `chainId:auction:auctionId:bidder`, schema-validated on read), `bids/open.ts` ("Open remaining bids" from published keys).
 
-Tests: B1 seal output passes the contract's `isValid` rule and opens with `openBid`; B2 vault round trip, wrong key fails; B3 corrupted storage entries are dropped, not thrown; B4 open.ts builds the same `openMany` calldata as the keeper.
+Tests: B1 seal output passes the contract's `isValid` rule and opens with `openBid`; B2 vault round trip, wrong key fails; B3 corrupted storage entries are dropped, not thrown; B4 open.ts builds the same `openMany` calldata as the keeper; B5 seal reads keeper keys from `keeperKeysOf` and the domain from the connected chain and the deployment, never from cache; B6 before sending `commit`, the app re-opens its own sealed bid locally with `openBid` against the sealed record and refuses to send if it would forfeit.
 
 ### Task 3.4: State and actions
 
@@ -205,10 +232,10 @@ Tests: X1 reverted receipt surfaces as an error, not success; X2 auction id come
 
 | Screen | Behaviour | Tests |
 | --- | --- | --- |
-| Create | "New token" (factory) or "Existing token" (address → name, symbol, decimals, balance); ladder, lot size, deposit, max bids, windows, seeding, Kuru preview; validation mirrors every `createAuction` revert | P1 each contract revert has a matching form error; P2 three-step flow (token, approve, create) resumes after a rejected step |
+| Create | "New token" (factory) or "Existing token" (address → name, symbol, decimals, balance); quote token from an allowlist (tUSD on testnet; USDC, WMON on mainnet); ladder, lot size, deposit, max bids, windows, seeding, Kuru preview; validation mirrors every `createAuction` revert | P1 each contract revert has a matching form error; P2 three-step flow (token, approve, create) resumes after a rejected step; P10 quote token outside the allowlist cannot be chosen |
 | Auction | Status bar (sealed, keys, opened, settled), countdown, bid card (one tx plus exact approve), "Open remaining bids", "Settle", "Cancel" shown only when `can*` is true, demand chart after opening | P3 buttons follow `canSettle`/`canCancel`; P4 bid form blocks invalid notional before signing |
 | Sealed | Reads the record from vault storage and chain; never claims a custom salt | P5 reload while disconnected shows chain data and asks to connect for the private record |
-| Result | Clearing price, sold, allocation table from `BidOpened`, Kuru market link, claim and reclaim | P6 table equals `clearing.ts` for the reference example |
+| Result | Clearing price, sold, allocation table from `BidOpened` (counted, refunded, forfeited), Kuru market link; "Claim" plus separate "Claim refund only" and "Claim tokens" when one leg fails; authority: reclaim legs, hand off seed, release seed after lock; anyone: burn forfeits | P6 table equals `clearing.ts` for the reference example; P9 a failing tokens leg still lets the refund be claimed |
 | My bids, Team | From chain via multicall plus vault records; Team shows unwind after lock | P7 lists auctions past id 20 |
 | Home, How, Docs, NotFound | v2 copy, addresses per chain, ErrorBoundary, route id validation | P8 `/auction/abc` renders NotFound, app stays mounted |
 
@@ -246,20 +273,21 @@ Exit: `pnpm typecheck && pnpm test && pnpm build` green; e2e green; QA checklist
 | --- | --- | --- | --- |
 | v1 contract | `contracts/test/BlindAuction.t.sol` | 16 | Unchanged record of the deployed v1 |
 | Tokens | `test/v2/Tokens.t.sol` | 6 | Metadata, events, allowances, factory validation |
-| Curve library | `test/v2/Secp256k1.t.sol` | 10 | Constants, point validation, ecrecover scalar check (fuzz), reconstruction for all pairs (fuzz), share key parity |
-| Keeper registry | `test/v2/KeeperRegistry.t.sol` | 7 | FIFO, ownership, rotation, validation, auction-only consume |
+| Curve library | `test/v2/Secp256k1.t.sol` | 11 | Constants, point validation incl. on-curve x ≥ n, ecrecover scalar check (fuzz), reconstruction for all pairs (fuzz), share key parity |
+| Keeper registry | `test/v2/KeeperRegistry.t.sol` | 10 | FIFO, ownership, rotation, zero owner, duplicate keys, skip, validation, auction-only consume |
 | Create | `test/v2/Create.t.sol` | 13 | Every `createAuction` revert, lots, single-step ladder, keeper keys, fee-on-transfer sale token |
 | Commit | `test/v2/Commit.t.sol` | 8 | Window, authority, one bid per wallet, max bids, ephemeral validation, fee-on-transfer quote |
 | Publish | `test/v2/Publish.t.sol` | 7 | Timing, key check, double and third publication, frozen sorted pair, after cancel |
-| Open | `test/v2/Open.t.sol` | 10 | Every pair, wrong shared point, invalid bids of five kinds, copied ciphertext, inconsistent shares vs frozen pair, batching |
-| Settle | `test/v2/Settle.t.sol` | 11 | Reference example, undersubscribed, no bids, invalid only, exact fill, dust, guards, no deadline, paginated tally |
-| Claim | `test/v2/Claim.t.sol` | 12 | Payouts and zero residual, invalid refunds, dust to authority, lots in base units, claimTo, guards, claims before tally, cancel, no cancel once paired, reentrancy, claimable view |
-| Seed hand-off | `test/v2/Seed.t.sol` | 9 | setSeeder, validate at create, seed config bounds, exact amounts, accept revert, seed revert, allowance cap, low-gas settle, nothing sold |
-| Parity | `test/v2/Vectors.t.sol` | 1 (4 vectors) | TypeScript-sealed bids open on chain for every pair and a corrupted case |
-| Differential and solvency | `test/v2/Fuzz.t.sol` | 1 × 256 runs | v2 vs v1 clearing, dust bound, zero residual balance, all pairs |
-| Gas | `test/v2/Gas.t.sol` | 1 | 200 bids, bounds 57,000 per open and 370,000 settle |
-| Kuru spike | `test/spike/KuruSpike.t.sol` | 1 (fork) | Contract-driven market creation and fill on testnet |
-| sealed-bid | `packages/sealed-bid/tests` | 30 | Curve, encoding, Shamir, seal/open, clearing mirror with 2,000-book differential |
+| Open | `test/v2/Open.t.sol` | 11 | Every pair, wrong shared point, invalid bids of five kinds (one forfeits), copied ciphertext forfeits, inconsistent shares vs frozen pair (H2), prefixes, batching |
+| Settle | `test/v2/Settle.t.sol` | 12 | Reference example with event, undersubscribed, no bids, invalid only, exact fill, cumulative pro-rata, H3 regressions, guards, no deadline |
+| Claim | `test/v2/Claim.t.sol` | 13 | Payouts and zero residual, invalid refunds, no unsold remainder, lots in base units, split legs, M1 regression, forfeits burned, guards, cancel, no cancel once paired, reentrancy, claimable view |
+| Seed | `test/v2/Seed.t.sol` | 12 | setSeeder, validate at create, config bounds, reserve without calls, hand-off amounts and allowances, failed hand-off then release, seed retry, greedy seeder, nothing sold, sold out, zero quote share, H1 regression |
+| Guards | `test/v2/Guards.t.sol` | 10 | Missing auction on every entry point, open after settle, bad share in a batch, swapped shares, key 0 and ≥ n, double cancel, EOA sale token, key rollback, payout events, boundaries |
+| Parity | `test/v2/Vectors.t.sol` | 1 (6 vectors) | TS-sealed bids open on chain for every pair; out-of-ladder and zero-quantity refunded; corrupted case forfeits |
+| Differential and solvency | `test/v2/Fuzz.t.sol` | 1 × 256 runs | v2 vs v1 clearing (same step, price and total; within one lot per bid), random forfeits, zero residual balance, all pairs |
+| Gas | `test/v2/Gas.t.sol` | 2 | 200 bids: open bound 54,000 per bid, settle bound 129,000; settle cost equal for 2 and 200 bids |
+| Kuru spike | `test/spike/KuruSpike.t.sol` | 2 (fork) | Contract-driven market creation and fill; order id recovery and cancel |
+| sealed-bid | `packages/sealed-bid/tests` | 37 | Curve, encoding, domain binding, Shamir, seal/open, key validation, clearing mirror with 2,000-book differential, vectors freshness |
 | Phase 2 | this file | S1 to S14, D1 to D3, K1 to K11, T1 to T3 | Seeder, deploy, keepers, live testnet |
-| Phase 3 | this file | C1 to C4, A1 to A4, B1 to B4, X1 to X4, P1 to P8, e2e | Web |
+| Phase 3 | this file | C1 to C4, A1 to A4, B1 to B6, X1 to X4, P1 to P10, e2e | Web |
 | Phase 4 | this file | M1 to M5 | Mainnet and docs |
