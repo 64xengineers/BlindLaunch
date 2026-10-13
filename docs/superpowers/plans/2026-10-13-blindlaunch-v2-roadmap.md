@@ -17,7 +17,7 @@
 | 1b | Fixes for the independent audit (H1, H2, H3, M1, M2, M3, L1, L2, I2, I4) | Done on branch `v2/phase-0-1`. 133 Foundry tests, 37 Vitest tests. |
 | 2 | Market seeder, deploy scripts, keeper service, testnet deployment | Done on branch `v2/phase-0-1` except Task 2.4 (live testnet deploy), which needs the owner's funded keys and go-ahead. |
 | 3 | Web app rebuild | Built and tested against a local chain on branch `v2/phase-0-1`. Remaining: the passkey device matrix and manual QA on testnet (Task 3.10), both after Task 2.4. |
-| 4 | Mainnet, docs, demo | After phase 3 |
+| 4 | Mainnet, docs, demo | 4.1 done (Kuru fork tests pass on Monad testnet and mainnet; mainnet needs `seedInto`), 4.4 docs rewritten and fact-checked, 4.6 demo script, pitch deck and write-up drafted, 4.7 review done (findings fixed below). Remaining: 4.2 mainnet deploy, 4.3 mainnet keepers, 4.5 mainnet demo staging, all after Task 2.4. |
 
 Dependency order: 2.1 → 2.2 → 2.4; 2.3 can run in parallel with 2.1; 3.x needs 2.4 (testnet addresses) and the Mera matrix; 4.x needs 3.x.
 
@@ -242,6 +242,15 @@ The owner rejected the phase 3 look ("the charts make no sense"; users are impat
 | Critique | 15 findings, all fixed: Kuru card linked to the explorer and had an unexplained lock; the bid receipt did not say the full bid money is locked now; "Bid locked" showed to non-bidders; the crowded-sale wording was wrong (bids above the final price fill in full, bids at it get the same share of what they asked); "12.5" tokens became 125; plus wording, counts and motion polish. |
 
 Not yet checked: phone layouts (out of scope for now) and Kuru's deep link to a market page (the button opens Kuru's app; the token address is shown to search for).
+
+## Phase 4 execution log (14 Oct 2026)
+
+| Where | What happened | Resolution |
+| --- | --- | --- |
+| 4.1 | Kuru fork tests on a Monad mainnet fork failed: only Kuru's Router owner may call `deployProxy` there; trading in an existing market is open to all; Kuru's `verifiedMarket(address)` returns a genuine market's settings | `MarketSeeder.seedInto` seeds into a Kuru-verified market; fork tests pick testnet or mainnet addresses (`KURU_FORK_RPC`) and pass on both |
+| 4.7 | Seven review dimensions (contracts, crypto, Kuru, keeper, web logic, UI truth, tests/CI); each finding verified against the code by the fixer before fixing, every fix with a test | About 50 findings fixed across contracts, sealed-bid, keeper and web (see the spec's revision log and the commit history). The tests/CI dimension did not finish in this pass |
+| Deferred | Replacing a keeper that stops responding (recommended: two of three owners may replace the third); proof that a keeper knows each enqueued key's secret (closes the derived-key gap, e.g. 2P); a registry view of queued keys so a keeper can skip lost ones; USDT-style approve (non-zero to non-zero); `seed()` adopting an existing identical market | Owner decisions; documented here |
+| Tests | Contracts 182 (+2 fork suites, 5 tests each on testnet and mainnet), sealed-bid 45, abi 4, keeper 32 (incl. anvil end to end), web 122 (incl. anvil end to end) | All green; typecheck and production build green |
 
 ## Phase 3: Web application
 
