@@ -228,7 +228,7 @@ const BL = {};
   function blob(x, y, fill, tag, flip) {
     return '<g transform="translate(' + x + " " + y + ')"><path d="M-17 30 C-20 8 -14 -10 0 -10 C14 -10 20 8 17 30Z" fill="' + fill + '" stroke="#000" stroke-width="3" stroke-linejoin="round"/>' +
       '<circle cx="-5" cy="2" r="2.6" fill="#000"/><circle cx="5" cy="2" r="2.6" fill="#000"/><path d="M-4 10 q4 4 8 0" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round"/>' +
-      (tag ? '<path d="M' + (flip ? "-12" : "12") + ' 16 l' + (flip ? "-8" : "8") + ' -8" stroke="#000" stroke-width="3" stroke-linecap="round"/><g transform="translate(' + (flip ? -42 : 14) + ' -18) rotate(' + (flip ? -6 : 6) + ')"><path d="M0 0 h28 l6 7 l-6 7 h-28z" fill="' + C.paper + '" stroke="#000" stroke-width="2.5" stroke-linejoin="round"/><text x="14" y="10.6" text-anchor="middle" font-family="Oxanium, ui-monospace, monospace" font-weight="800" font-size="9.5" fill="#000">' + tag + "</text></g>" : "") + "</g>";
+      (tag ? '<path d="M0 -10 V-17" stroke="#000" stroke-width="3" stroke-linecap="round"/><g transform="translate(-20 -32) rotate(' + (flip ? -5 : 5) + ' 20 7)"><path d="M0 0 h34 l6 7 l-6 7 h-34z" fill="' + C.paper + '" stroke="#000" stroke-width="2.5" stroke-linejoin="round"/><text x="17" y="10.6" text-anchor="middle" font-family="Oxanium, ui-monospace, monospace" font-weight="800" font-size="9.5" fill="#000">' + tag + "</text></g>" : "") + "</g>";
   }
   function coin(x, y, r) { return '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="' + C.yellow + '" stroke="#000" stroke-width="2.5"/><path d="M' + x + " " + (y - r * 0.45) + " v" + r * 0.9 + '" stroke="#000" stroke-width="2"/>'; }
 
@@ -241,7 +241,7 @@ const BL = {};
       '<text x="80" y="88" text-anchor="middle" font-family="Oxanium, ui-monospace, monospace" font-weight="800" font-size="11" fill="#000">0:00</text>' +
       miniLock(34, 34, true, C.cyan, -10) + miniLock(126, 34, true, C.yellow, 10) + miniLock(24, 92, true, C.green, -6) + miniLock(136, 92, true, C.violet, 8) + miniLock(80, 14, true, C.magenta, 0) +
       '<path d="M46 26 l6 -6 M114 26 l-6 -6 M38 82 l8 -2 M122 82 l-8 -2 M70 4 l-4 -4 M90 4 l4 -4" stroke="#000" stroke-width="2.5" stroke-linecap="round"/>',
-    3: blob(36, 66, C.cyan, "$0.016", true) + blob(84, 60, C.violet, "$0.016") + blob(132, 70, C.green, "$0.016") +
+    3: blob(36, 74, C.cyan, "$0.016", true) + blob(84, 68, C.violet, "$0.016") + blob(132, 76, C.green, "$0.016", true) +
       '<path d="M8 112 H152" stroke="#000" stroke-width="3" stroke-linecap="round"/>',
     4: '<g transform="translate(6 34)"><rect x="0" y="22" width="56" height="48" fill="' + C.green + '" stroke="#000" stroke-width="3"/><path d="M-4 22 L4 2 H52 L60 22Z" fill="' + C.paper + '" stroke="#000" stroke-width="3" stroke-linejoin="round"/><path d="M14 2 L10 22 M28 2 V22 M42 2 L46 22" stroke="#000" stroke-width="2.5"/><path d="M-4 22 q8 8 16 0 q8 8 16 0 q8 8 16 0 q8 8 16 0" fill="' + C.green + '" stroke="#000" stroke-width="3"/><path d="M12 48 l10 -10 l8 6 l12 -14" fill="none" stroke="#000" stroke-width="3"/></g>' +
       '<path d="M54 46 Q90 0 118 52" fill="none" stroke="#000" stroke-width="2" stroke-dasharray="4 5"/>' + coin(74, 22, 7) + coin(98, 20, 7) + coin(114, 40, 6) +

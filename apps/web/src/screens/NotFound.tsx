@@ -1,11 +1,20 @@
-import { Link } from "react-router-dom";
+import { Bubble, Hush, PrimaryLink } from "../components/ui";
 
-export function NotFound({ message = "This page does not exist." }: { message?: string }) {
+export function NotFound({ message = "This page doesn't exist, or the launch link is wrong." }: { message?: string }) {
   return (
-    <div className="mx-auto max-w-xl px-4 py-16" role="alert">
-      <h1 className="text-4xl font-bold tracking-[-0.03em]">Not found</h1>
-      <p className="mt-3 text-mist">{message}</p>
-      <Link className="btn-primary mt-6 inline-flex items-center no-underline" to="/"><span className="relative z-10">Back to auctions</span></Link>
+    <div className="hm-wrap">
+      <div className="panel panel-lg hm-nf rise" role="alert">
+        <div className="hm-nf-hush">
+          <span className="hm-nf-says shout" aria-hidden="true">Wrong door</span>
+          <span className="hush-wrap inline-block"><Hush pose="error" size={190} /></span>
+        </div>
+        <div>
+          <span className="label !text-coral">Error 404</span>
+          <h1 className="hm-h1 mt-2">Nothing here</h1>
+          <Bubble className="mt-6 max-w-[30em]">{message}</Bubble>
+          <PrimaryLink to="/" icon="chevron-right" className="mt-9 min-w-[320px]">Back to launches</PrimaryLink>
+        </div>
+      </div>
     </div>
   );
 }

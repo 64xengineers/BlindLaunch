@@ -9,7 +9,11 @@ import { timeLeft } from "./ui";
 
 function line(auction: AuctionView, now: bigint) {
   const name = auction.sale.name;
-  const price = (value: bigint) => `$${formatAmount(value, auction.quote.decimals, 3)}`;
+  const price = (value: bigint) => {
+    const [whole, fraction = ""] = formatAmount(value, auction.quote.decimals, 6).split(".");
+    const amount = `${whole}.${fraction.padEnd(2, "0")}`;
+    return /usd/i.test(auction.quote.symbol) ? `$${amount}` : `${amount} ${auction.quote.symbol}`;
+  };
   switch (phaseOf(auction, now)) {
     case "scheduled": return { icon: "clock" as const, body: <><b>{name}</b> starts in <i>{timeLeft(Number(auction.commitStart), Number(now))}</i></> };
     case "bidding": return { icon: "lock" as const, body: <><b>{name}</b> is live · <i>{auction.bidCount}</i> secret bids · <i>{timeLeft(Number(auction.commitDeadline), Number(now))}</i> left</> };
