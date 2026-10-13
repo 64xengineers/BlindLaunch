@@ -6,9 +6,11 @@ import { KeyStore } from "./keystore";
 const config = loadConfig(process.env);
 const log: Logger = (event, data = {}) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), keeper: config.keeperIndex, event, ...data }));
+const store = new KeyStore(config.keyStorePath);
+store.lock(); // refuses to start while another keeper process uses this KEY_STORE
 const keeper = {
   chain: createChainContext(config),
-  store: new KeyStore(config.keyStorePath),
+  store,
   index: config.keeperIndex,
   queueTarget: config.queueTarget,
   log,

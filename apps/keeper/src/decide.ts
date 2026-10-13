@@ -26,22 +26,47 @@ export type DecisionContext = {
   keeper: KeeperIndex;
   /** Whether this keeper holds the secret for its key in this auction. */
   haveSecret: boolean;
-  /** Timestamp of the latest block. Never the local clock (audit M3). */
+  /**
+   * Timestamp of the latest finalized block. Never Monad's speculative latest (Proposed) block,
+   * which can still be dropped (audit M3).
+   */
   chainTime: bigint;
+  /**
+   * This host's clock, in unix seconds. Publishing also waits for it to reach commitDeadline, so a
+   * single RPC endpoint reporting a wrong chain time cannot release a key early: it can only delay one.
+   */
+  hostTime: bigint;
 };
 
 /**
+ * Keeper i publishes no earlier than `commitDeadline + i * PUBLISH_STAGGER` by chain time, so the
+ * keepers do not act in lockstep: by the time keeper 2 looks, two keys are usually out already and
+ * a third is never broadcast.
+ */
+export const PUBLISH_STAGGER = 5n;
+
+/**
+ * No key is published within this many seconds of cancelAfter by chain time: a publishKey mined at
+ * or after cancelAfter reverts with the secret already in its calldata, and a lone key is useless
+ * once the auction can be cancelled.
+ */
+export const PUBLISH_CANCEL_MARGIN = 60n;
+
+/**
  * What to do next for one auction, in order. Pure, so the rules are unit-tested:
- * publish only between the deadline and cancelAfter by chain time, only for auctions with bids,
- * and never a third key; open and settle have no deadline once a pair exists; cancel only when
- * cancelAfter passed without a pair.
+ * publish only between the deadline (staggered by keeper) and PUBLISH_CANCEL_MARGIN before
+ * cancelAfter by chain time, only once the host clock has reached the deadline too, only for
+ * auctions with bids, and never a third key; open and settle have no deadline once a pair exists;
+ * cancel only when cancelAfter passed without a pair.
  */
 export function nextActions(view: AuctionView, ctx: DecisionContext): Action[] {
   if (view.status === STATUS.Open) {
     if (view.publishedCount >= 2) return [view.openedCount < view.bidCount ? "open" : "settle"];
     if (ctx.chainTime >= view.cancelAfter) return ["cancel"];
     const mine = view.publishedKeys[ctx.keeper] === 0n;
-    if (ctx.haveSecret && mine && view.bidCount > 0 && ctx.chainTime >= view.commitDeadline) return ["publish"];
+    const due = ctx.chainTime >= view.commitDeadline + PUBLISH_STAGGER * BigInt(ctx.keeper) && ctx.hostTime >= view.commitDeadline;
+    const safe = ctx.chainTime + PUBLISH_CANCEL_MARGIN < view.cancelAfter;
+    if (ctx.haveSecret && mine && view.bidCount > 0 && due && safe) return ["publish"];
     return [];
   }
   if (view.status === STATUS.Settled) {

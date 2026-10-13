@@ -28,6 +28,7 @@ import {
 import { mnemonicToAccount, type HDAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createChainContext } from "../src/chain";
+import { PUBLISH_STAGGER } from "../src/decide";
 import { runPass, type Keeper } from "../src/keeper";
 import { KeyStore } from "../src/keystore";
 
@@ -62,6 +63,8 @@ const testClient = createTestClient({ chain, mode: "anvil", transport: http(rpc)
 let anvil: ChildProcess | undefined;
 let deployment: Deployment;
 let keepers: Keeper[];
+/** The keepers' host clock. Anvil time is warped, so the test keeps this at the latest block's time. */
+let hostNow = 0n;
 
 async function write(from: HDAccount, address: Address, abi: Abi, functionName: string, args: readonly unknown[]) {
   const wallet = createWalletClient({ account: from, chain, transport: http(rpc) });
@@ -71,9 +74,18 @@ async function write(from: HDAccount, address: Address, abi: Abi, functionName: 
   return receipt;
 }
 
+/** Anvil runs with one slot per epoch, so its finalized block is the one two blocks before latest. */
+const FINALITY_LAG = 2;
+
+async function mine(blocks: number) {
+  await testClient.mine({ blocks });
+  hostNow = (await publicClient.getBlock()).timestamp;
+}
+
+/** Moves chain time forward far enough that the finalized block, which keepers gate on, sees it. */
 async function warp(seconds: number) {
   await testClient.increaseTime({ seconds });
-  await testClient.mine({ blocks: 1 });
+  await mine(1 + FINALITY_LAG);
 }
 
 function auction(id: bigint) {
@@ -140,7 +152,9 @@ async function bid(id: bigint, bidder: HDAccount, step: number, quantity: bigint
 
 describe.skipIf(!hasFoundry)("keeper end to end on anvil", () => {
   beforeAll(async () => {
-    anvil = spawn("anvil", ["--port", String(port), "--chain-id", "31337", "--silent"], { stdio: "ignore" });
+    anvil = spawn("anvil", ["--port", String(port), "--chain-id", "31337", "--slots-in-an-epoch", "1", "--silent"], {
+      stdio: "ignore",
+    });
     for (let attempt = 0; ; attempt += 1) {
       try {
         await publicClient.getChainId();
@@ -173,6 +187,7 @@ describe.skipIf(!hasFoundry)("keeper end to end on anvil", () => {
       index,
       queueTarget: 3,
       log: () => {},
+      clock: () => hostNow,
     }));
   }, 180_000);
 
@@ -201,8 +216,16 @@ describe.skipIf(!hasFoundry)("keeper end to end on anvil", () => {
     expect((await runPass(keepers[0]!)).sent).not.toContain("publishKey");
     expect((await auction(id)).publishedCount).toBe(0);
 
-    await warp(121);
+    // Past the deadline only in the latest (on Monad, speculative) block: still nobody publishes.
+    await testClient.increaseTime({ seconds: 121 });
+    await mine(1);
+    const finalized = await publicClient.getBlock({ blockTag: "finalized" });
+    expect(finalized.timestamp).toBeLessThan((await auction(id)).commitDeadline);
+    expect((await runPass(keepers[0]!)).sent).not.toContain("publishKey");
+
+    await mine(FINALITY_LAG);
     expect((await runPass(keepers[0]!)).sent).toContain("publishKey");
+    await warp(Number(PUBLISH_STAGGER) * 2); // keeper 2 publishes last
     const second = await runPass(keepers[2]!);
     expect(second.sent).toEqual(expect.arrayContaining(["publishKey", "openMany", "settle", "handOffSeed"]));
 
@@ -238,7 +261,7 @@ describe.skipIf(!hasFoundry)("keeper end to end on anvil", () => {
     const id = await createAuction(1_000n);
     const bidder = accounts[5]!;
     await bid(id, bidder, 2, 50n);
-    await warp(121);
+    await warp(121 + Number(PUBLISH_STAGGER)); // keeper 1 publishes one stagger after the deadline
     expect((await runPass(keepers[1]!)).sent).toContain("publishKey");
     await warp(3_600);
     expect((await runPass(keepers[1]!)).sent).toContain("cancel");
@@ -253,4 +276,15 @@ describe.skipIf(!hasFoundry)("keeper end to end on anvil", () => {
     });
     expect(after - before).toBe(10_000n * USD);
   }, 120_000);
+
+  it("recovers from a transaction that was broadcast but never mined, instead of leaving a nonce gap", async () => {
+    const keeper = keepers[0]!;
+    const address = keeper.chain.account.address;
+    const nonce = await publicClient.getTransactionCount({ address });
+    // As if the keeper's last transaction had been dropped: the chain is one nonce behind what it used.
+    await testClient.setNonce({ address, nonce: nonce - 1 });
+    await keeper.chain.send({ address: deployment.registry, abi: keeperRegistryAbi as Abi, functionName: "skip", args: [0, 0n] });
+    await keeper.chain.send({ address: deployment.registry, abi: keeperRegistryAbi as Abi, functionName: "skip", args: [0, 0n] });
+    expect(await publicClient.getTransactionCount({ address })).toBe(nonce + 1);
+  }, 30_000);
 });

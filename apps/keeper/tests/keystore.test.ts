@@ -1,8 +1,24 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { KeyStore } from "../src/keystore";
+
+const fsCalls: string[] = vi.hoisted(() => []);
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...fs,
+    fsyncSync: (fd: number) => {
+      fsCalls.push(fs.fstatSync(fd).isDirectory() ? "fsync-dir" : "fsync-file");
+      fs.fsyncSync(fd);
+    },
+    renameSync: (from: string, to: string) => {
+      fsCalls.push("rename");
+      fs.renameSync(from, to);
+    },
+  };
+});
 
 function freshPath() {
   return join(mkdtempSync(join(tmpdir(), "keeper-")), "keys.json");
@@ -36,6 +52,36 @@ describe("KeyStore (K1)", () => {
     store.add([{ x: 3n, secret: 4n }]);
     expect(JSON.parse(readFileSync(path, "utf8")).keys).toHaveProperty("0x3");
     expect(new KeyStore(path).secretFor(1n)).toBe(2n);
+  });
+
+  it("is durable before it returns: fsyncs the temp file, renames it, then fsyncs the directory", () => {
+    const store = new KeyStore(freshPath());
+    fsCalls.length = 0;
+    store.add([{ x: 1n, secret: 2n }]);
+    expect(fsCalls).toEqual(["fsync-file", "rename", "fsync-dir"]);
+  });
+
+  it("uses a unique temp file per write and leaves none behind", () => {
+    const path = freshPath();
+    const store = new KeyStore(path);
+    store.add([{ x: 1n, secret: 2n }]);
+    store.add([{ x: 3n, secret: 4n }]);
+    expect(readdirSync(dirname(path))).toEqual(["keys.json"]);
+  });
+
+  it("refuses a second lock while a live process holds it, and takes over a stale one", () => {
+    const path = freshPath();
+    const first = new KeyStore(path);
+    first.lock();
+    expect(() => new KeyStore(path).lock()).toThrow(/locked by process/);
+    first.unlock();
+    expect(existsSync(`${path}.lock`)).toBe(false);
+
+    writeFileSync(`${path}.lock`, "99999999"); // a process that no longer exists
+    const second = new KeyStore(path);
+    second.lock();
+    expect(readFileSync(`${path}.lock`, "utf8")).toBe(String(process.pid));
+    second.unlock();
   });
 
   it("refuses to overwrite a secret with a different one", () => {
