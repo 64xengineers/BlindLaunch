@@ -325,7 +325,7 @@ kuruSize(baseUnits) = baseUnits · sizePrecision / 10^saleDecimals
 
 Hand-off from the auction (phase 1, independent of Kuru): `settle` only reserves the seed. If seeding is configured and `totalSold > 0`, it stores `seedSale = min(seedSaleLots, unsoldLots)·lotSize` and `seedQuote = proceeds·seedQuoteBps/10000` and sets `seedState = Reserved`. Anyone then calls `handOffSeed`: the auction approves exactly those amounts, `seeder.accept(order)` pulls them, the auction checks both balance deltas and that both allowances are back to 0, sets `HandedOff`, and calls `try seeder.seed(auctionId)`. If anything before `seed` fails, the whole call reverts and can be retried. If the seed is never handed off, anyone can call `releaseSeed` after `seedLockUntil`, which returns the reserved amounts to the authority. `reclaim` always excludes the reserved amounts, so they are paid exactly once.
 
-Primary path inside the seeder (verified by the phase-0 spike). `seed`:
+Primary path inside the seeder (verified by the phase-0 spike and by `test/spike/MarketSeederFork.t.sol` on real Kuru). Each auction's position lives in its own `SeedVault`, because Kuru margin balances are per address. `seed` (anyone, retryable):
 
 1. If no market recorded for (sale, quote): `Router.deployProxy(...)`, record the address from the return value.
 2. Approve and `MarginAccount.deposit(address(this), token, amount)` for both.
@@ -450,3 +450,4 @@ Add: `docs/superpowers/specs/` (this file), `docs/superpowers/plans/`, `.github/
 | 2026-10-13 | `settle` makes no external calls; seed reserved, then `handOffSeed` / `releaseSeed` | Audit H1: a sale token whose `balanceOf` reverts bricked settle and locked every deposit |
 | 2026-10-13 | Claims and reclaims split per token | Audit M1: a paused sale token held back the quote refund |
 | 2026-10-13 | Commitment binds chain id and contract; registry rejects duplicate keys and zero owners, adds `skip`; keeper publish timing rule; trust statement corrected | Audit M2, M3, L1, L2, I2 |
+| 2026-10-13 | Per-auction `SeedVault`; bid size rounded to Kuru's exact unit; `unwind` permissionless and covers never-seeded positions | Phase 2: Kuru margin is per address; fork test found Kuru's ceil-debit, floor-refund rounding |

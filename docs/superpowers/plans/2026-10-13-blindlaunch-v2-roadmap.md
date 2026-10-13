@@ -15,7 +15,7 @@
 | 0 | Spikes, hygiene, CI | Done on branch `v2/phase-0-1`. Mera device matrix not yet run (needs a person with a passkey device). |
 | 1 | `@blindlaunch/sealed-bid`, v2 contracts, full test suite | Done on branch `v2/phase-0-1`. |
 | 1b | Fixes for the independent audit (H1, H2, H3, M1, M2, M3, L1, L2, I2, I4) | Done on branch `v2/phase-0-1`. 133 Foundry tests, 37 Vitest tests. |
-| 2 | Market seeder, deploy scripts, keeper service, testnet deployment | Next |
+| 2 | Market seeder, deploy scripts, keeper service, testnet deployment | Done on branch `v2/phase-0-1` except Task 2.4 (live testnet deploy), which needs the owner's funded keys and go-ahead. |
 | 3 | Web app rebuild | After phase 2 testnet deployment |
 | 4 | Mainnet, docs, demo | After phase 3 |
 
@@ -60,6 +60,21 @@ An independent audit of the spec and the phase 0-1 plan found three high, five m
 Measured after the fixes: 42,453 gas per opened bid (batches of 50); `settle` 102,412 gas with 2 bids and with 200 bids.
 
 ---
+
+## Phase 2 execution log
+
+| Where | What happened | Resolution |
+| --- | --- | --- |
+| 2.1 | Kuru margin balances are per address, so one seeder holding every auction's funds would pool them. | Each auction gets its own `SeedVault` (deployed by `seed`) that deposits, posts, and on `unwind` withdraws only its own balances. |
+| 2.1 | Fork test: Kuru debits a bid's quote rounded up and refunds it rounded down; 100 quote units were stranded. | Bid size rounded down to a multiple of `sizePrecision / gcd(bidPrice, sizePrecision)`; fork test now exact (`spikes.md`). |
+| 2.1 | `unwind` was specified for the authority only. | Permissionless after the lock, always paying the authority; also returns a position that was never seeded. |
+| 2.1 | `deployProxy` has 11 arguments. | Called with two `abi.encode` halves, which equals the full encoding for static types, avoiding stack-too-deep. |
+| 2.2 | Dry runs would have written simulated addresses. | `deployments/<chainId>.json` is written only in a broadcast (`vm.isContext`). `deployments/` must exist for Foundry's write permission (`.gitkeep`). |
+| 2.3 | ABIs were going to be generated into each app. | New `@blindlaunch/abi` package generated from `contracts/out`, with `pnpm --filter @blindlaunch/abi check` in CI. |
+| 2.3 | Keeper was specified to scan `AuctionCreated` logs. | It walks auction ids from `nextAuctionId` instead: no log-range limits, and every decision is from current chain state. |
+| 2.3 | Local end-to-end needed Kuru on anvil. | `contracts/script/LocalStack.s.sol` deploys mock Kuru and the v2 stack to chain 31337 (`deployments/31337.json` is gitignored). |
+
+Tests added in phase 2: `MarketSeeder.t.sol` 18 (S1 to S15 and solvency), `DeployV2.t.sol` 4 (D2), `spike/MarketSeederFork.t.sol` 1 (S14 on real Kuru), `@blindlaunch/abi` 3 (D3), keeper 17 (K1 to K4, K6, K8 to K10; K5 and K7 inside the end-to-end run; K11 is handled in code by one nonce-reset retry and not separately tested).
 
 ## Phase 2: Seeder, deployment, keepers, testnet
 
@@ -286,6 +301,11 @@ Exit: `pnpm typecheck && pnpm test && pnpm build` green; e2e green; QA checklist
 | Parity | `test/v2/Vectors.t.sol` | 1 (6 vectors) | TS-sealed bids open on chain for every pair; out-of-ladder and zero-quantity refunded; corrupted case forfeits |
 | Differential and solvency | `test/v2/Fuzz.t.sol` | 1 × 256 runs | v2 vs v1 clearing (same step, price and total; within one lot per bid), random forfeits, zero residual balance, all pairs |
 | Gas | `test/v2/Gas.t.sol` | 2 | 200 bids: open bound 54,000 per bid, settle bound 129,000; settle cost equal for 2 and 200 bids |
+| Market seeder | `test/v2/MarketSeeder.t.sol` | 18 | validate (on tick, off tick, floor below two ticks, above uint32, bad params, at create), accept guards, prices and sizes for 18/6 decimals, market reuse, one vault per auction, skipped side, seed once, Kuru failure then retry, lock, unwind after a partial fill, never-seeded unwind, solvency end to end |
+| Deploy | `test/v2/DeployV2.t.sol` | 4 | Wiring, existing quote token, quote choice guard, chain without Kuru |
+| Seeder on real Kuru | `test/spike/MarketSeederFork.t.sol` | 1 (fork) | Auction to market at the clearing price, third-party buy, exact unwind |
+| ABI package | `packages/abi/tests` | 3 | Deployment file parsing |
+| Keeper | `apps/keeper/tests` | 17 | Key store, decision rules, anvil end to end (refill, chain-time gating, publish/open/settle/hand-off, TS parity, idempotency, cancel and refund) |
 | Kuru spike | `test/spike/KuruSpike.t.sol` | 2 (fork) | Contract-driven market creation and fill; order id recovery and cancel |
 | sealed-bid | `packages/sealed-bid/tests` | 37 | Curve, encoding, domain binding, Shamir, seal/open, key validation, clearing mirror with 2,000-book differential, vectors freshness |
 | Phase 2 | this file | S1 to S14, D1 to D3, K1 to K11, T1 to T3 | Seeder, deploy, keepers, live testnet |
