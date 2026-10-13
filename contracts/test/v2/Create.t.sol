@@ -182,6 +182,15 @@ contract CreateTest is V2Base {
         auction.createAuction(_params());
     }
 
+    /// Review finding: the registry's revert bubbled up with a selector missing from the auction's ABI, so the
+    /// web app could not name it. The auction declares the same error, and its ABI now decodes it.
+    function test_noKeeperKeysUsesASelectorInTheAuctionAbi() public {
+        assertTrue(BlindAuctionV2.NoKeeperKeys.selector == KeeperRegistry.NoKeeperKeys.selector);
+        vm.prank(authority);
+        vm.expectRevert(BlindAuctionV2.NoKeeperKeys.selector);
+        auction.createAuction(_params());
+    }
+
     function test_feeOnTransferSaleTokenRejected() public {
         FeeToken token = new FeeToken();
         token.mint(authority, 1000);

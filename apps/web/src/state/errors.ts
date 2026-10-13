@@ -62,6 +62,7 @@ export const errorMessages: Record<string, string> = {
   NoKeeperKeys: "The keepers have no fresh keys right now. Try again in a minute.",
   DuplicateKey: "That keeper key was used before.",
   ZeroOwner: "The owner cannot be empty.",
+  DuplicateOwner: "That address already runs another keeper.",
 };
 
 export function friendlyError(error: unknown): string {

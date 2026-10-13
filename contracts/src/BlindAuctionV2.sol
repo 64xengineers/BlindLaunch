@@ -48,6 +48,8 @@ contract BlindAuctionV2 {
         Cancelled
     }
 
+    /// @dev `Released` means at least one reserved leg was returned, so the seed can no longer be handed
+    ///      off; `seedReleasedOf` says which legs are paid.
     enum SeedState {
         None,
         Reserved,
@@ -172,6 +174,9 @@ contract BlindAuctionV2 {
     error AllowanceLeft();
     error TransferFailed();
     error Reentrancy();
+    /// @dev Raised by `KeeperRegistry.consume` inside `createAuction` and bubbled up unchanged. Declared
+    ///      here so clients decode a failed creation with this contract's ABI alone.
+    error NoKeeperKeys();
 
     event SeederSet(address seeder);
     event AuctionCreated(
@@ -205,6 +210,8 @@ contract BlindAuctionV2 {
     event SeedReserved(uint256 indexed auctionId, uint256 saleAmount, uint256 quoteAmount);
     event SeedHandedOff(uint256 indexed auctionId);
     event SeedReleased(uint256 indexed auctionId);
+    event SeedSaleReleased(uint256 indexed auctionId, address to, uint256 amount);
+    event SeedQuoteReleased(uint256 indexed auctionId, address to, uint256 amount);
 
     KeeperRegistry public immutable registry;
     address public immutable deployer;
@@ -219,6 +226,11 @@ contract BlindAuctionV2 {
     mapping(uint256 => uint256[3]) internal _publishedKeys;
     mapping(uint256 => uint256[64]) internal _qtyAtStep;
     mapping(uint256 => bytes) internal _kuruParams;
+    /// @dev Reserved seed legs already returned: bit `SEED_SALE` the sale tokens, bit `SEED_QUOTE` the quote.
+    mapping(uint256 => uint8) internal _seedReleased;
+
+    uint8 internal constant SEED_SALE = 1;
+    uint8 internal constant SEED_QUOTE = 2;
 
     modifier nonReentrant() {
         if (_locked != 1) revert Reentrancy();
@@ -587,15 +599,58 @@ contract BlindAuctionV2 {
         emit SeedHandedOff(auctionId);
     }
 
-    /// @notice Returns a seed that was never handed off to the authority once the lock has passed.
+    /// @notice Once the lock has passed, returns a seed that was never handed off: whichever reserved legs
+    ///         are still unpaid go to the authority. Anyone may call it.
     function releaseSeed(uint256 auctionId) external nonReentrant {
         Auction storage a = _requireAuction(auctionId);
-        if (a.seedState != SeedState.Reserved) revert NoSeed();
+        uint8 legs = _seedReleased[auctionId];
+        if (legs == (SEED_SALE | SEED_QUOTE)) revert NoSeed();
+        _startRelease(auctionId, a);
+        _seedReleased[auctionId] = SEED_SALE | SEED_QUOTE;
+        if ((legs & SEED_SALE) == 0) _pushSeed(auctionId, a, true, a.authority);
+        if ((legs & SEED_QUOTE) == 0) _pushSeed(auctionId, a, false, a.authority);
+    }
+
+    /// @notice Returns only the reserved sale tokens, to `to`, so a blocked quote token cannot hold them back.
+    function releaseSeedSale(uint256 auctionId, address to) external nonReentrant {
+        _releaseLeg(auctionId, SEED_SALE, to);
+    }
+
+    /// @notice Returns only the reserved quote tokens, to `to`, so a blocked sale token or an authority the
+    ///         quote token blocks cannot hold them back.
+    function releaseSeedQuote(uint256 auctionId, address to) external nonReentrant {
+        _releaseLeg(auctionId, SEED_QUOTE, to);
+    }
+
+    function _releaseLeg(uint256 auctionId, uint8 leg, address to) private {
+        Auction storage a = _authorityOf(auctionId);
+        if ((_seedReleased[auctionId] & leg) != 0) revert AlreadyReclaimed();
+        _startRelease(auctionId, a);
+        _seedReleased[auctionId] |= leg;
+        _pushSeed(auctionId, a, leg == SEED_SALE, to);
+    }
+
+    /// @dev A seed is releasable after the lock while it is Reserved, or Released with a leg still unpaid.
+    ///      The first release moves it to Released, which rules out a later hand-off.
+    function _startRelease(uint256 auctionId, Auction storage a) private {
+        SeedState state = a.seedState;
+        if (state != SeedState.Reserved && state != SeedState.Released) revert NoSeed();
         if (block.timestamp < a.seedLockUntil) revert TooEarly();
-        a.seedState = SeedState.Released;
-        _push(a.saleToken, a.authority, a.seedSale);
-        _push(a.quoteToken, a.authority, a.seedQuote);
-        emit SeedReleased(auctionId);
+        if (state == SeedState.Reserved) {
+            a.seedState = SeedState.Released;
+            emit SeedReleased(auctionId);
+        }
+    }
+
+    function _pushSeed(uint256 auctionId, Auction storage a, bool saleLeg, address to) private {
+        if (to == address(0)) revert ZeroAddress();
+        if (saleLeg) {
+            _push(a.saleToken, to, a.seedSale);
+            emit SeedSaleReleased(auctionId, to, a.seedSale);
+        } else {
+            _push(a.quoteToken, to, a.seedQuote);
+            emit SeedQuoteReleased(auctionId, to, a.seedQuote);
+        }
     }
 
     function _seedOrder(uint256 auctionId, Auction storage a) private view returns (IMarketSeeder.SeedOrder memory) {
@@ -726,6 +781,12 @@ contract BlindAuctionV2 {
 
     function kuruParamsOf(uint256 auctionId) external view returns (bytes memory) {
         return _kuruParams[auctionId];
+    }
+
+    /// @notice Which reserved seed legs `releaseSeed`, `releaseSeedSale` and `releaseSeedQuote` have paid.
+    function seedReleasedOf(uint256 auctionId) external view returns (bool sale, bool quote) {
+        uint8 legs = _seedReleased[auctionId];
+        return ((legs & SEED_SALE) != 0, (legs & SEED_QUOTE) != 0);
     }
 
     /// @notice The commitment `h` a bidder must submit for bid `m`.

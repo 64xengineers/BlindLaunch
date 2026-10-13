@@ -35,6 +35,10 @@ contract GuardsTest is V2Base {
         vm.expectRevert(missing);
         auction.releaseSeed(9);
         vm.expectRevert(missing);
+        auction.releaseSeedSale(9, alice);
+        vm.expectRevert(missing);
+        auction.releaseSeedQuote(9, alice);
+        vm.expectRevert(missing);
         auction.claim(9);
         vm.expectRevert(missing);
         auction.reclaim(9);

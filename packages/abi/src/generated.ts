@@ -1153,6 +1153,66 @@ export const blindAuctionV2Abi = [
   },
   {
     "type": "function",
+    "name": "releaseSeedQuote",
+    "inputs": [
+      {
+        "name": "auctionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseSeedSale",
+    "inputs": [
+      {
+        "name": "auctionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "seedReleasedOf",
+    "inputs": [
+      {
+        "name": "auctionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sale",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "quote",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "seeder",
     "inputs": [],
     "outputs": [
@@ -1472,6 +1532,31 @@ export const blindAuctionV2Abi = [
   },
   {
     "type": "event",
+    "name": "SeedQuoteReleased",
+    "inputs": [
+      {
+        "name": "auctionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SeedReleased",
     "inputs": [
       {
@@ -1501,6 +1586,31 @@ export const blindAuctionV2Abi = [
       },
       {
         "name": "quoteAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SeedSaleReleased",
+    "inputs": [
+      {
+        "name": "auctionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1700,6 +1810,11 @@ export const blindAuctionV2Abi = [
   {
     "type": "error",
     "name": "MissingAuction",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoKeeperKeys",
     "inputs": []
   },
   {
@@ -2005,8 +2120,8 @@ export const keeperRegistryAbi = [
     "inputs": [
       {
         "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -2137,6 +2252,11 @@ export const keeperRegistryAbi = [
   {
     "type": "error",
     "name": "DuplicateKey",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DuplicateOwner",
     "inputs": []
   },
   {

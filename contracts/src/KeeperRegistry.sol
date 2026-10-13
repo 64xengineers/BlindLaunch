@@ -17,6 +17,7 @@ contract KeeperRegistry {
     error NoKeeperKeys();
     error DuplicateKey();
     error ZeroOwner();
+    error DuplicateOwner();
 
     event KeysEnqueued(uint8 indexed keeper, uint256 count);
     event KeyConsumed(uint8 indexed keeper, uint256 indexed auctionId, uint256 x, uint256 y);
@@ -30,10 +31,15 @@ contract KeeperRegistry {
 
     mapping(uint8 => Secp256k1.Point[]) internal _queue;
     mapping(uint8 => uint256) public head;
-    /// @dev keccak256(x, y) of every key ever enqueued, by any keeper. A key is never reused.
-    mapping(bytes32 => bool) public used;
+    /// @dev The x-coordinate of every key ever enqueued, by any keeper. A key is never reused, and neither
+    ///      is its negation: P and -P share x, and whoever knows the secret k of one knows n - k for the other.
+    mapping(uint256 => bool) public used;
 
+    /// @dev Three distinct, non-zero owners: one address holding two slots could open bids alone.
     constructor(address[3] memory owners_) {
+        for (uint8 i = 0; i < 3; ++i) {
+            _checkOwner(owners_, i, owners_[i]);
+        }
         deployer = msg.sender;
         owners = owners_;
     }
@@ -48,9 +54,17 @@ contract KeeperRegistry {
     function setOwner(uint8 keeper, address owner) external {
         if (keeper > 2) revert BadKeeper();
         if (msg.sender != owners[keeper]) revert NotKeeper();
-        if (owner == address(0)) revert ZeroOwner();
+        _checkOwner(owners, keeper, owner);
         owners[keeper] = owner;
         emit OwnerChanged(keeper, owner);
+    }
+
+    /// @dev `owner` may take slot `keeper`: it is non-zero and holds neither of the other two slots.
+    function _checkOwner(address[3] memory current, uint8 keeper, address owner) private pure {
+        if (owner == address(0)) revert ZeroOwner();
+        for (uint8 i = 0; i < 3; ++i) {
+            if (i != keeper && current[i] == owner) revert DuplicateOwner();
+        }
     }
 
     function enqueue(uint8 keeper, Secp256k1.Point[] calldata keys) external {
@@ -60,9 +74,8 @@ contract KeeperRegistry {
         for (uint256 i = 0; i < keys.length; ++i) {
             Secp256k1.Point memory key = keys[i];
             if (!Secp256k1.isValid(key)) revert BadPoint();
-            bytes32 id = keccak256(abi.encodePacked(key.x, key.y));
-            if (used[id]) revert DuplicateKey();
-            used[id] = true;
+            if (used[key.x]) revert DuplicateKey();
+            used[key.x] = true;
             queue.push(key);
         }
         emit KeysEnqueued(keeper, keys.length);

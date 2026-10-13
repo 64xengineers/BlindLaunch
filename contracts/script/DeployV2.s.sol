@@ -57,6 +57,12 @@ contract DeployV2 is Script {
     function deploy(Config memory config) public returns (Deployment memory d) {
         require(config.deployTestQuote != (config.quoteToken != address(0)), "set exactly one of QUOTE_TOKEN, DEPLOY_TEST_QUOTE");
         require(config.kuruRouter.code.length != 0 && config.kuruMargin.code.length != 0, "Kuru not deployed here");
+        address[3] memory owners = config.keeperOwners;
+        require(
+            owners[0] != address(0) && owners[1] != address(0) && owners[2] != address(0) && owners[0] != owners[1]
+                && owners[0] != owners[2] && owners[1] != owners[2],
+            "keeper owners must be three different non-zero addresses"
+        );
 
         KeeperRegistry registry = new KeeperRegistry(config.keeperOwners);
         BlindAuctionV2 auction = new BlindAuctionV2(registry);

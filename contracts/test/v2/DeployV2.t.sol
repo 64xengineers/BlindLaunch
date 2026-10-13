@@ -63,4 +63,12 @@ contract DeployV2Test is Test {
         vm.expectRevert(bytes("Kuru not deployed here"));
         script.deploy(config);
     }
+    function test_refusesMissingOrRepeatedKeeperOwners() public {
+        config.keeperOwners[1] = address(0);
+        vm.expectRevert(bytes("keeper owners must be three different non-zero addresses"));
+        script.deploy(config);
+        config.keeperOwners[1] = config.keeperOwners[2];
+        vm.expectRevert(bytes("keeper owners must be three different non-zero addresses"));
+        script.deploy(config);
+    }
 }

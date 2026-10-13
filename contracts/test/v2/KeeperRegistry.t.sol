@@ -138,4 +138,42 @@ contract KeeperRegistryTest is Test {
         Secp256k1.Point memory got = registry.consume(0, 1);
         assertEq(got.x, keys[2].x);
     }
+    /// Review finding: P and -P share x, and the secret of -P is n - k, so one keeper's secret opened two shares.
+    function test_rejectsANegatedKey() public {
+        Secp256k1.Point[] memory keys = _keys(100, 1);
+        Secp256k1.Point[] memory negated = new Secp256k1.Point[](1);
+        negated[0] = Secp256k1.Point(keys[0].x, Secp256k1.P - keys[0].y);
+        Vm.Wallet memory other = vm.createWallet(Secp256k1.N - 100);
+        assertEq(other.publicKeyX, negated[0].x, "negation is the key of n - k");
+        assertEq(other.publicKeyY, negated[0].y, "negation is the key of n - k");
+
+        vm.prank(owners[0]);
+        registry.enqueue(0, keys);
+        vm.prank(owners[1]);
+        vm.expectRevert(KeeperRegistry.DuplicateKey.selector);
+        registry.enqueue(1, negated);
+        vm.prank(owners[0]);
+        vm.expectRevert(KeeperRegistry.DuplicateKey.selector);
+        registry.enqueue(0, negated);
+    }
+
+    /// Review finding: a zero owner could never enqueue, halting creation for good; one owner on two slots
+    /// could open bids alone.
+    function test_rejectsZeroOrDuplicateOwners() public {
+        address a = makeAddr("a");
+        address b = makeAddr("b");
+        vm.expectRevert(KeeperRegistry.ZeroOwner.selector);
+        new KeeperRegistry([a, address(0), b]);
+        vm.expectRevert(KeeperRegistry.DuplicateOwner.selector);
+        new KeeperRegistry([a, b, a]);
+        vm.expectRevert(KeeperRegistry.DuplicateOwner.selector);
+        new KeeperRegistry([a, b, b]);
+
+        vm.prank(owners[0]);
+        vm.expectRevert(KeeperRegistry.DuplicateOwner.selector);
+        registry.setOwner(0, owners[2]);
+        vm.prank(owners[0]);
+        registry.setOwner(0, owners[0]);
+        assertEq(registry.owners(0), owners[0]);
+    }
 }

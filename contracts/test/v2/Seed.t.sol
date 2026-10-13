@@ -11,6 +11,8 @@ contract SeedTest is V2Base {
     event SeedReserved(uint256 indexed auctionId, uint256 saleAmount, uint256 quoteAmount);
     event SeedHandedOff(uint256 indexed auctionId);
     event SeedReleased(uint256 indexed auctionId);
+    event SeedSaleReleased(uint256 indexed auctionId, address to, uint256 amount);
+    event SeedQuoteReleased(uint256 indexed auctionId, address to, uint256 amount);
 
     function _withSeeder(MockSeeder seeder) internal {
         vm.expectEmit(address(auction));
@@ -124,6 +126,13 @@ contract SeedTest is V2Base {
         auction.handOffSeed(id);
         vm.expectRevert(BlindAuctionV2.NoSeed.selector);
         auction.releaseSeed(id);
+        vm.warp(auction.getAuction(id).seedLockUntil);
+        vm.startPrank(authority);
+        vm.expectRevert(BlindAuctionV2.NoSeed.selector);
+        auction.releaseSeedSale(id, authority);
+        vm.expectRevert(BlindAuctionV2.NoSeed.selector);
+        auction.releaseSeedQuote(id, authority);
+        vm.stopPrank();
 
         _claimAll(id);
         uint256 saleBefore = sale.balanceOf(authority);
@@ -251,5 +260,91 @@ contract SeedTest is V2Base {
         auction.reclaimProceeds(id, authority);
         assertEq(quote.balanceOf(authority), 6_000);
         assertEq(quote.balanceOf(address(auction)), 1_500, "only the reserved quote seed remains");
+    }
+    /// Review finding: a paused sale token held back the reserved quote too. Each leg now moves on its own,
+    /// and the authority can send it to another address.
+    function test_blockedSaleTokenCannotHoldBackTheQuoteSeed() public {
+        _withSeeder(new MockSeeder());
+        HostileToken token = new HostileToken();
+        token.mint(authority, 1000);
+        vm.prank(authority);
+        token.approve(address(auction), 1000);
+        BlindAuctionV2.CreateParams memory p = _seededParams();
+        p.saleToken = address(token);
+        uint256 id = _prepareUndersubscribed(p);
+        auction.settle(id);
+
+        token.setPaused(true);
+        vm.warp(auction.getAuction(id).seedLockUntil);
+        vm.expectRevert(BlindAuctionV2.TransferFailed.selector);
+        auction.releaseSeed(id);
+
+        address vault = makeAddr("vault");
+        vm.prank(alice);
+        vm.expectRevert(BlindAuctionV2.NotAuthority.selector);
+        auction.releaseSeedQuote(id, vault);
+        vm.prank(authority);
+        vm.expectRevert(BlindAuctionV2.ZeroAddress.selector);
+        auction.releaseSeedQuote(id, address(0));
+
+        vm.prank(authority);
+        vm.expectEmit(address(auction));
+        emit SeedReleased(id);
+        vm.expectEmit(address(auction));
+        emit SeedQuoteReleased(id, vault, 1_500);
+        auction.releaseSeedQuote(id, vault);
+        assertEq(quote.balanceOf(vault), 1_500);
+        assertEq(uint256(auction.getAuction(id).seedState), uint256(BlindAuctionV2.SeedState.Released));
+        (bool saleOut, bool quoteOut) = auction.seedReleasedOf(id);
+        assertFalse(saleOut);
+        assertTrue(quoteOut);
+
+        vm.prank(authority);
+        vm.expectRevert(BlindAuctionV2.AlreadyReclaimed.selector);
+        auction.releaseSeedQuote(id, vault);
+        vm.expectRevert(BlindAuctionV2.NoSeed.selector);
+        auction.handOffSeed(id);
+
+        token.setPaused(false);
+        vm.expectEmit(address(auction));
+        emit SeedSaleReleased(id, authority, 100);
+        vm.prank(makeAddr("anyone"));
+        auction.releaseSeed(id);
+        assertEq(token.balanceOf(authority), 100, "only the unpaid sale leg");
+        assertEq(quote.balanceOf(vault), 1_500, "quote leg paid once");
+        (saleOut, quoteOut) = auction.seedReleasedOf(id);
+        assertTrue(saleOut && quoteOut);
+        vm.expectRevert(BlindAuctionV2.NoSeed.selector);
+        auction.releaseSeed(id);
+        vm.prank(authority);
+        vm.expectRevert(BlindAuctionV2.AlreadyReclaimed.selector);
+        auction.releaseSeedSale(id, authority);
+    }
+
+    function test_authorityReleasesEachSeedLegToAnAddressItChooses() public {
+        _withSeeder(new MockSeeder());
+        uint256 id = _settleUndersubscribed();
+        address vault = makeAddr("vault");
+        vm.prank(authority);
+        vm.expectRevert(BlindAuctionV2.TooEarly.selector);
+        auction.releaseSeedSale(id, vault);
+
+        vm.warp(auction.getAuction(id).seedLockUntil);
+        vm.prank(authority);
+        vm.expectEmit(address(auction));
+        emit SeedSaleReleased(id, vault, 100);
+        auction.releaseSeedSale(id, vault);
+        vm.prank(authority);
+        auction.releaseSeedQuote(id, vault);
+        assertEq(sale.balanceOf(vault), 100);
+        assertEq(quote.balanceOf(vault), 1_500);
+        vm.expectRevert(BlindAuctionV2.NoSeed.selector);
+        auction.releaseSeed(id);
+
+        _claimAll(id);
+        vm.prank(authority);
+        auction.reclaim(id);
+        assertEq(sale.balanceOf(address(auction)), 0, "seed paid exactly once");
+        assertEq(quote.balanceOf(address(auction)), 0, "seed paid exactly once");
     }
 }
