@@ -102,4 +102,40 @@ contract KeeperRegistryTest is Test {
         registry.enqueue(0, _keys(100, 1));
         assertEq(registry.available(0), 1);
     }
+
+    function test_rejectsDuplicateKeysWithinAndAcrossKeepers() public {
+        Secp256k1.Point[] memory keys = _keys(100, 1);
+        vm.prank(owners[0]);
+        registry.enqueue(0, keys);
+        vm.prank(owners[0]);
+        vm.expectRevert(KeeperRegistry.DuplicateKey.selector);
+        registry.enqueue(0, keys);
+        vm.prank(owners[1]);
+        vm.expectRevert(KeeperRegistry.DuplicateKey.selector);
+        registry.enqueue(1, keys);
+    }
+
+    function test_rejectsZeroOwner() public {
+        vm.prank(owners[2]);
+        vm.expectRevert(KeeperRegistry.ZeroOwner.selector);
+        registry.setOwner(2, address(0));
+    }
+
+    function test_ownerCanSkipCompromisedKeys() public {
+        Secp256k1.Point[] memory keys = _keys(200, 3);
+        vm.prank(owners[0]);
+        registry.enqueue(0, keys);
+        vm.prank(owners[1]);
+        vm.expectRevert(KeeperRegistry.NotKeeper.selector);
+        registry.skip(0, 1);
+        vm.prank(owners[0]);
+        registry.skip(0, 2);
+        assertEq(registry.available(0), 1);
+        vm.prank(owners[0]);
+        vm.expectRevert(KeeperRegistry.NoKeeperKeys.selector);
+        registry.skip(0, 2);
+        vm.prank(auction);
+        Secp256k1.Point memory got = registry.consume(0, 1);
+        assertEq(got.x, keys[2].x);
+    }
 }

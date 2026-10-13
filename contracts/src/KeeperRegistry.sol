@@ -15,11 +15,14 @@ contract KeeperRegistry {
     error NotDeployer();
     error AuctionAlreadySet();
     error NoKeeperKeys();
+    error DuplicateKey();
+    error ZeroOwner();
 
     event KeysEnqueued(uint8 indexed keeper, uint256 count);
     event KeyConsumed(uint8 indexed keeper, uint256 indexed auctionId, uint256 x, uint256 y);
     event OwnerChanged(uint8 indexed keeper, address owner);
     event AuctionSet(address auction);
+    event KeysSkipped(uint8 indexed keeper, uint256 count);
 
     address public immutable deployer;
     address public auction;
@@ -27,6 +30,8 @@ contract KeeperRegistry {
 
     mapping(uint8 => Secp256k1.Point[]) internal _queue;
     mapping(uint8 => uint256) public head;
+    /// @dev keccak256(x, y) of every key ever enqueued, by any keeper. A key is never reused.
+    mapping(bytes32 => bool) public used;
 
     constructor(address[3] memory owners_) {
         deployer = msg.sender;
@@ -43,6 +48,7 @@ contract KeeperRegistry {
     function setOwner(uint8 keeper, address owner) external {
         if (keeper > 2) revert BadKeeper();
         if (msg.sender != owners[keeper]) revert NotKeeper();
+        if (owner == address(0)) revert ZeroOwner();
         owners[keeper] = owner;
         emit OwnerChanged(keeper, owner);
     }
@@ -54,9 +60,22 @@ contract KeeperRegistry {
         for (uint256 i = 0; i < keys.length; ++i) {
             Secp256k1.Point memory key = keys[i];
             if (!Secp256k1.isValid(key)) revert BadPoint();
+            bytes32 id = keccak256(abi.encodePacked(key.x, key.y));
+            if (used[id]) revert DuplicateKey();
+            used[id] = true;
             queue.push(key);
         }
         emit KeysEnqueued(keeper, keys.length);
+    }
+
+    /// @notice Discards the next `count` queued keys, for example after a key store leak.
+    function skip(uint8 keeper, uint256 count) external {
+        if (keeper > 2) revert BadKeeper();
+        if (msg.sender != owners[keeper]) revert NotKeeper();
+        uint256 next = head[keeper] + count;
+        if (next > _queue[keeper].length) revert NoKeeperKeys();
+        head[keeper] = next;
+        emit KeysSkipped(keeper, count);
     }
 
     function available(uint8 keeper) external view returns (uint256) {
