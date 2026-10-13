@@ -12,6 +12,7 @@ import { HowItWorks } from "./screens/HowItWorks";
 import { MyBids } from "./screens/MyBids";
 import { Result } from "./screens/Result";
 import { TeamDashboard } from "./screens/TeamDashboard";
+import { MeraSpike } from "./spikes/MeraSpike";
 
 const quietStatuses = new Set(["Auctions loaded.", "Reading auctions from Monad testnet.", ""]);
 
@@ -62,6 +63,7 @@ export function App() {
           <Route path="/auction/:id" element={<BidPage />} />
           <Route path="/auction/:id/sealed" element={<BidSealed />} />
           <Route path="/auction/:id/result" element={<Result />} />
+          <Route path="/spike/mera" element={<MeraSpike />} />
         </Routes>
       </main>
       <Footer />
