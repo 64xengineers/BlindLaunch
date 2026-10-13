@@ -67,3 +67,41 @@ export function openBid(input: OpenInput): Opened {
   const hashOk = commitmentHash(input, input.auctionId, input.bidder, m).toLowerCase() === input.h.toLowerCase();
   return { m, hashOk, bid: hashOk ? decodeBid(m) : null, shared: [sharedA, sharedB] };
 }
+
+/**
+ * Proves, before sending, that a sealed bid opens to its own `m` under every keeper pair, using
+ * the bidder's ephemeral secret `r` (no keeper secret needed). A bid that fails this would be
+ * forfeited on chain, so the app must never send it.
+ */
+export function verifySealed(sealed: Pick<Sealed, "R" | "c" | "m" | "r">, keeperKeys: readonly [Point, Point, Point]): boolean {
+  if (!isValid(sealed.R) || sealed.R.x >= N) return false;
+  if (mulBase(sealed.r).x !== sealed.R.x || mulBase(sealed.r).y !== sealed.R.y) return false;
+  const shares = ([0, 1, 2] as const).map((i) => sealed.c[i] ^ shareKey(mul(keeperKeys[i], sealed.r), i));
+  const pairs: [KeeperIndex, KeeperIndex][] = [[0, 1], [0, 2], [1, 2]];
+  return pairs.every(([a, b]) => shamirReconstruct(a, b, shares[a]!, shares[b]!) === sealed.m);
+}
+
+export type OpenBatch = { slots: number[]; sharedA: Point[]; sharedB: Point[] };
+
+/** The `openMany` arguments for every unopened bid, using the frozen pair's published keys. */
+export function openBatches(input: {
+  publishedKeys: readonly [bigint, bigint, bigint];
+  pairA: number;
+  pairB: number;
+  bids: readonly { slot: number; ephemeral: Point; opened: boolean }[];
+  batchSize: number;
+}): OpenBatch[] {
+  const keyA = input.publishedKeys[input.pairA as KeeperIndex];
+  const keyB = input.publishedKeys[input.pairB as KeeperIndex];
+  const pending = input.bids.filter((bid) => !bid.opened);
+  const out: OpenBatch[] = [];
+  for (let i = 0; i < pending.length; i += input.batchSize) {
+    const batch = pending.slice(i, i + input.batchSize);
+    out.push({
+      slots: batch.map((bid) => bid.slot),
+      sharedA: batch.map((bid) => sharedPoint(keyA, bid.ephemeral)),
+      sharedB: batch.map((bid) => sharedPoint(keyB, bid.ephemeral)),
+    });
+  }
+  return out;
+}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decodeBid } from "../src/bid";
 import { deterministicRng, G, mulBase, N } from "../src/curve";
-import { openBid, seal, shareKey } from "../src/seal";
+import { openBatches, openBid, seal, shareKey, sharedPoint, verifySealed } from "../src/seal";
 import type { KeeperIndex } from "../src/shamir";
 
 const secretKeys = [11n, 22n, 33n] as const;
@@ -72,5 +72,32 @@ describe("seal and open", () => {
   it("refuses invalid keeper keys", () => {
     const bad = [keeperKeys[0], { x: keeperKeys[1].x, y: keeperKeys[1].y + 1n }, keeperKeys[2]] as const;
     expect(() => seal({ ...domain, auctionId: 7n, bidder, step: 0, quantity: 1n, keeperKeys: bad }, deterministicRng("bad"))).toThrow(RangeError);
+  });
+});
+
+describe("verifySealed", () => {
+  it("accepts an honest seal under every pair", () => {
+    expect(verifySealed(sealOne("verify"), keeperKeys)).toBe(true);
+  });
+
+  it("rejects a seal whose ciphertext was changed", () => {
+    const sealed = sealOne("verify-bad");
+    expect(verifySealed({ ...sealed, c: [sealed.c[0], sealed.c[1], sealed.c[2] ^ 1n] }, keeperKeys)).toBe(false);
+  });
+
+  it("rejects a seal checked against different keeper keys", () => {
+    const other = [mulBase(44n), keeperKeys[1], keeperKeys[2]] as const;
+    expect(verifySealed(sealOne("verify-keys"), other)).toBe(false);
+  });
+});
+
+describe("openBatches", () => {
+  it("builds the openMany calldata a keeper or bidder sends, skipping opened slots", () => {
+    const sealed = [sealOne("b0"), sealOne("b1"), sealOne("b2")];
+    const bids = sealed.map((s, slot) => ({ slot, ephemeral: s.R, opened: slot === 1 }));
+    const batches = openBatches({ publishedKeys: [secretKeys[0], 0n, secretKeys[2]], pairA: 0, pairB: 2, bids, batchSize: 1 });
+    expect(batches.map((b) => b.slots)).toEqual([[0], [2]]);
+    expect(batches[0]!.sharedA[0]).toEqual(sharedPoint(secretKeys[0], sealed[0]!.R));
+    expect(batches[1]!.sharedB[0]).toEqual(sharedPoint(secretKeys[2], sealed[2]!.R));
   });
 });

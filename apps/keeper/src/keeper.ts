@@ -1,8 +1,8 @@
 import { blindAuctionV2Abi, keeperRegistryAbi, marketSeederAbi } from "@blindlaunch/abi";
-import { defaultRng, isValid, mulBase, randomScalar, sharedPoint, type Point } from "@blindlaunch/sealed-bid";
+import { defaultRng, isValid, mulBase, openBatches, randomScalar, type Point } from "@blindlaunch/sealed-bid";
 import type { Abi } from "viem";
 import type { ChainContext } from "./chain";
-import { batches, nextActions, STATUS, type Action, type AuctionView, type KeeperIndex } from "./decide";
+import { nextActions, STATUS, type Action, type AuctionView, type KeeperIndex } from "./decide";
 import type { KeyStore } from "./keystore";
 
 export const OPEN_BATCH = 50;
@@ -144,18 +144,15 @@ async function perform(keeper: Keeper, view: AuctionView, action: Action, secret
 /** Opens every unopened bid with the frozen pair's published keys, 50 per transaction. */
 export async function openAll(keeper: Keeper, view: AuctionView, report: PassReport): Promise<void> {
   const { publicClient, deployment } = keeper.chain;
-  const slots = Array.from({ length: view.bidCount }, (_, slot) => slot);
   const bids = await Promise.all(
-    slots.map((slot) =>
-      publicClient.readContract({ address: deployment.auction, abi: blindAuctionV2Abi, functionName: "getBid", args: [view.id, slot] }),
+    Array.from({ length: view.bidCount }, (_, slot) =>
+      publicClient
+        .readContract({ address: deployment.auction, abi: blindAuctionV2Abi, functionName: "getBid", args: [view.id, slot] })
+        .then((bid) => ({ slot, ephemeral: bid.ephemeral, opened: bid.opened })),
     ),
   );
-  const keyA = view.publishedKeys[view.pairA as 0 | 1 | 2];
-  const keyB = view.publishedKeys[view.pairB as 0 | 1 | 2];
-  const pending = slots.filter((slot) => !bids[slot]?.opened);
-  for (const batch of batches(pending, OPEN_BATCH)) {
-    const sharedA = batch.map((slot) => sharedPoint(keyA, bids[slot]!.ephemeral));
-    const sharedB = batch.map((slot) => sharedPoint(keyB, bids[slot]!.ephemeral));
-    await send(keeper, report, deployment.auction, auctionAbi, "openMany", [view.id, batch, sharedA, sharedB]);
+  const plan = openBatches({ publishedKeys: view.publishedKeys, pairA: view.pairA, pairB: view.pairB, bids, batchSize: OPEN_BATCH });
+  for (const batch of plan) {
+    await send(keeper, report, deployment.auction, auctionAbi, "openMany", [view.id, batch.slots, batch.sharedA, batch.sharedB]);
   }
 }
