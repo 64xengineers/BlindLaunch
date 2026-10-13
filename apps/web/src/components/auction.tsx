@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { formatUnits, type Address } from "viem";
 import { explorerUrl, network } from "../chain/config";
 import { formatAmount, formatDate, formatLeft, shortAddress } from "../chain/format";
-import { priceAt, type AuctionView, type BidView, type Phase, type RawAuction, type TokenMeta } from "../chain/model";
+import { priceAt, SEED, STATUS, type AuctionView, type BidView, type Phase, type RawAuction, type TokenMeta } from "../chain/model";
 import { calm } from "../state/motion";
 import { CopyButton, Fold, Icon, Panel, Sticker, type StickerTone, type TrackerStage } from "./ui";
 
@@ -29,20 +29,35 @@ export function phaseMessage(phase: Phase, a: AuctionView, now: bigint): string 
     case "bidding":
       return `Bids stay secret until the end. Bidding closes in ${left(a.commitDeadline)}.`;
     case "awaitingKeys":
-      return "Bidding is closed. Every bid unlocks by itself. Bidders have nothing to do.";
+      return a.bidCount === 0
+        ? "Bidding closed with no bids. Nothing will be sold."
+        : "Bidding is closed. Every bid unlocks by itself. Bidders have nothing to do.";
     case "cancellable":
-      return "The bids could not unlock in time. Anyone can refund everyone, in full.";
+      return a.bidCount === 0
+        ? "Bidding closed with no bids. Anyone can call the launch off now."
+        : "The bids could not unlock in time. Anyone can refund everyone, in full.";
     case "opening":
       return "Bids are unlocking. Anyone can press the button to speed it up.";
     case "ready":
       return "Every bid is unlocked. Anyone can reveal the result now.";
     case "settled":
       return a.totalSold > 0n
-        ? `Final price ${priceText(a, a.clearingPrice)} for everyone. Winners can collect.`
-        : "Nothing was sold. Everyone can collect their money back.";
+        ? `Final price ${lotPriceText(a, a.clearingPrice)} for everyone. Winners can collect.`
+        : noSaleText(a);
     case "cancelled":
-      return "Called off. Everyone can collect their money back.";
+      return a.bidCount === 0 ? "Called off. Nobody bid." : "Called off. Everyone can collect their money back.";
   }
+}
+
+/**
+ * Why a settled launch sold nothing, and who gets money back. Every bid is on the ladder, so the
+ * only way to sell nothing is that no bid counted; a forfeited bid's money does not come back.
+ */
+export function noSaleText(a: Pick<RawAuction, "bidCount" | "forfeitedTotal">): string {
+  if (a.bidCount === 0) return "Nobody bid, so nothing was sold. The creator can take the tokens back.";
+  return a.forfeitedTotal > 0n
+    ? "None of the bids counted, so nothing was sold. Bids that broke the rules lose their bid money. Every other bidder gets all of theirs back."
+    : "None of the bids counted, so nothing was sold. Every bidder gets all their bid money back.";
 }
 
 /* ---------- plain number formats ---------- */
@@ -62,16 +77,32 @@ function places(value: bigint, decimals: number): number {
   return fraction.replace(/0+$/, "").length;
 }
 
-/** Money in the quote token: `$500.00` for dollar tokens, `500 WMON` otherwise. `cents: false` gives `$1,000`. */
-export function moneyText(value: bigint, quote: TokenMeta, cents = true): string {
-  if (usd(quote)) return `$${fixed(value, quote.decimals, cents ? 2 : 0)}`;
-  return `${formatAmount(value, quote.decimals, cents ? 4 : 0)} ${quote.symbol}`;
+/** Decimals up to the first significant digit: 0.05 gives 2, 0.0012 gives 3; 0 for zero or one unit and up. */
+function lead(value: bigint, decimals: number): number {
+  if (value <= 0n || value >= 10n ** BigInt(decimals)) return 0;
+  return decimals - value.toString().length + 1;
 }
 
-/** A price option, with as many decimals as the options need: `$0.012`, `$2.60`. */
+/**
+ * Money in the quote token: `$500.00` for dollar tokens, `500 WMON` otherwise. `cents: false` drops
+ * the decimals only when there are none: `$1,000`, but `$12.50`. Amounts under one unit keep two
+ * significant digits, so a small amount never reads as zero.
+ */
+export function moneyText(value: bigint, quote: TokenMeta, cents = true): string {
+  const whole = value % 10n ** BigInt(quote.decimals) === 0n;
+  const small = Math.min(places(value, quote.decimals), lead(value, quote.decimals) + 1);
+  if (usd(quote)) return `$${fixed(value, quote.decimals, !cents && whole ? 0 : Math.max(2, small))}`;
+  return `${formatAmount(value, quote.decimals, Math.max(4, small))} ${quote.symbol}`;
+}
+
+/**
+ * A price option, with as many decimals as the options need: `$0.012`, `$2.60`. Usually at most six,
+ * but never so few that the lowest price reads as zero or two options look the same.
+ */
 export function priceText(a: Pick<RawAuction, "minPrice" | "stepSize"> & { quote: TokenMeta }, value: bigint): string {
   const q = a.quote;
-  const need = Math.min(6, Math.max(places(a.minPrice, q.decimals), places(a.stepSize, q.decimals)));
+  const exact = Math.max(places(a.minPrice, q.decimals), places(a.stepSize, q.decimals));
+  const need = Math.min(exact, Math.max(6, lead(a.stepSize, q.decimals), lead(a.minPrice, q.decimals) + 3));
   if (usd(q)) return `$${fixed(value, q.decimals, Math.max(2, need))}`;
   return `${fixed(value, q.decimals, need)} ${q.symbol}`;
 }
@@ -84,6 +115,42 @@ export function wholeLots(a: Pick<RawAuction, "lotSize">, sale: TokenMeta): bool
 /** Tokens for a number of lots: `25,000 NCAT`. */
 export function tokensText(a: AuctionView, lots: bigint): string {
   return `${formatAmount(lots * a.lotSize, a.sale.decimals)} ${a.sale.symbol}`;
+}
+
+/** What one price option buys: `token` when one lot is one token, otherwise `pack of 1,000 NCAT`. */
+export function unitText(a: Pick<RawAuction, "lotSize"> & { sale: TokenMeta }): string {
+  return wholeLots(a, a.sale) ? "token" : `pack of ${formatAmount(a.lotSize, a.sale.decimals)} ${a.sale.symbol}`;
+}
+
+/** A price with its unit when one lot is not one token: `$2.70`, or `$2.70 per pack of 1,000 NCAT`. */
+export function lotPriceText(a: Pick<RawAuction, "minPrice" | "stepSize" | "lotSize"> & { quote: TokenMeta; sale: TokenMeta }, value: bigint): string {
+  const price = priceText(a, value);
+  return wholeLots(a, a.sale) ? price : `${price} per ${unitText(a)}`;
+}
+
+/** True when the launch opens a Kuru market at settle. */
+export function hasKuru(a: Pick<RawAuction, "seedSaleLots" | "seedQuoteBps">): boolean {
+  return a.seedSaleLots > 0n || a.seedQuoteBps > 0;
+}
+
+/**
+ * The Kuru line of the rules. Kuru only gets tokens left unsold (`min(seedSaleLots, unsold)` lots)
+ * and a share of the money raised, and only when something sells; after settle it shows the real amounts.
+ */
+export function kuruRule(a: AuctionView): string {
+  if (!hasKuru(a)) return "Not set up for this launch";
+  const locked = `locked until ${formatDate(a.seedLockUntil)}`;
+  if (a.status === STATUS.Cancelled) return "No market: the launch was called off";
+  if (a.status === STATUS.Settled) {
+    if (a.seedState === SEED.None) return "No market: nothing was sold";
+    const parts = [a.seedSale > 0n ? `${formatAmount(a.seedSale, a.sale.decimals)} ${a.sale.symbol}` : null, a.seedQuote > 0n ? moneyText(a.seedQuote, a.quote) : null];
+    return `Opens at the final price with ${parts.filter(Boolean).join(" and ")}, ${locked}`;
+  }
+  const parts = [
+    a.seedSaleLots > 0n ? `up to ${formatAmount(a.seedSaleLots * a.lotSize, a.sale.decimals)} ${a.sale.symbol} from the tokens left unsold` : null,
+    a.seedQuoteBps > 0 ? `${a.seedQuoteBps / 100}% of the money raised` : null,
+  ];
+  return `Opens at the final price if anything sells, with ${parts.filter(Boolean).join(" and ")}, ${locked}`;
 }
 
 /* ---------- phase look ---------- */
@@ -110,27 +177,34 @@ export function PhaseSticker({ phase, className = "" }: { phase: Phase; classNam
   return <Sticker tone={look.tone} live={phase === "bidding"} className={className}>{look.word}</Sticker>;
 }
 
+const KURU_TIP = "Trading on Kuru opens at the final price. No dump at listing.";
 const tips = [
   "You never pay more than your max price.",
   "Everyone locks the same bid money, so nobody can guess your size.",
   "Bid high or bid right at the line: every winner pays the same final price.",
   "If the bids can't unlock, everyone gets every cent back.",
-  "Trading on Kuru opens at the final price. No dump at listing.",
+  KURU_TIP,
   "Bots can't snipe what they can't see.",
 ];
 
-/** One short tip at a time, changing every 6 seconds (still in calm mode). */
-export function Tip({ className = "" }: { className?: string }) {
+/** The tips for a launch: the Kuru one only when the launch opens a Kuru market. */
+export function tipsFor(kuru: boolean): string[] {
+  return kuru ? tips : tips.filter((tip) => tip !== KURU_TIP);
+}
+
+/** One short tip at a time, changing every 6 seconds (still in calm mode). Pass `kuru` only for launches with a Kuru market. */
+export function Tip({ className = "", kuru = false }: { className?: string; kuru?: boolean }) {
+  const list = tipsFor(kuru);
   const [index, setIndex] = useState(0);
   useEffect(() => {
     if (calm()) return;
-    const timer = window.setInterval(() => setIndex((value) => (value + 1) % tips.length), 6000);
+    const timer = window.setInterval(() => setIndex((value) => (value + 1) % list.length), 6000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [list.length]);
   return (
     <p className={`au-tip ${className}`}>
       <span className="label !text-yellow">Tip</span>
-      <span key={index} className="au-tip-text">{tips[index]}</span>
+      <span key={index} className="au-tip-text">{list[index % list.length]}</span>
     </p>
   );
 }
@@ -140,23 +214,17 @@ export function Tip({ className = "" }: { className?: string }) {
 export function AuctionRules({ auction }: { auction: AuctionView }) {
   const { sale, quote } = auction;
   const top = priceAt(auction, auction.stepCount - 1);
-  const seeded = auction.seedSaleLots > 0n || auction.seedQuoteBps > 0;
   const rules: [string, string][] = [
     ["Tokens for sale", `${formatAmount(auction.supply, sale.decimals)} ${sale.symbol}`],
     ...(wholeLots(auction, sale) ? [] : [["Sold in packs of", `${formatAmount(auction.lotSize, sale.decimals)} ${sale.symbol}`] as [string, string]]),
-    ["Price options", `${priceText(auction, auction.minPrice)} to ${priceText(auction, top)} (${auction.stepCount} options)`],
+    ["Price options", `${priceText(auction, auction.minPrice)} to ${lotPriceText(auction, top)} (${auction.stepCount} options)`],
     ["Bid money per bidder", `${moneyText(auction.deposit, quote, false)}, unused part comes back`],
     ...(auction.maxNotional < auction.deposit ? [["Most one bid can spend", moneyText(auction.maxNotional, quote)] as [string, string]] : []),
     ["Secret bids", `${auction.bidCount.toLocaleString()} of ${auction.maxBids.toLocaleString()} places taken`],
     ["Bidding opens", formatDate(auction.commitStart)],
     ["Bidding closes", formatDate(auction.commitDeadline)],
     ["Full refund if bids don't unlock by", formatDate(auction.cancelAfter)],
-    [
-      "Trading on Kuru",
-      seeded
-        ? `Opens at the final price with ${formatAmount(auction.seedSaleLots * auction.lotSize, sale.decimals)} ${sale.symbol} and ${auction.seedQuoteBps / 100}% of the money raised, locked until ${formatDate(auction.seedLockUntil)}`
-        : "Not set up for this launch",
-    ],
+    ["Trading on Kuru", kuruRule(auction)],
   ];
   return (
     <dl className="au-rules m-0">
@@ -187,7 +255,7 @@ export function BidList({ auction, bids, account }: { auction: AuctionView; bids
             : bid.forfeited
               ? ["alert", "text-coral", "Cheating bid: its money is burned"] as const
               : bid.counted
-                ? ["unlock", "text-green", `Asked ${tokensText(auction, bid.quantity)} at up to ${priceText(auction, priceAt(auction, bid.step))}`] as const
+                ? ["unlock", "text-green", `Asked ${tokensText(auction, bid.quantity)} at up to ${lotPriceText(auction, priceAt(auction, bid.step))}`] as const
                 : ["return", "text-muted", "Didn't count: full refund"] as const;
           return (
             <li key={bid.slot} className={mine ? "is-mine" : ""}>

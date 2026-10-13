@@ -8,9 +8,15 @@ export function formatAmount(value: bigint, decimals: number, maxFraction = 4): 
   return trimmed ? `${grouped}.${trimmed}` : grouped;
 }
 
-/** Parses a typed amount; null when it is not a plain decimal or has more fraction digits than the token allows. */
+/**
+ * Parses a typed amount; null when it is not a plain decimal or has more fraction digits than the token allows.
+ * A comma counts only when it groups thousands ("1,000.5"). Any other comma ("0,05", "2,5") is refused, not guessed,
+ * so the field shows an error instead of reading a decimal comma as 100 times the amount.
+ */
 export function parseAmount(text: string, decimals: number): bigint | null {
-  const value = text.trim().replace(/,/g, "");
+  const typed = text.trim();
+  if (typed.includes(",") && !/^[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?$/.test(typed)) return null;
+  const value = typed.replace(/,/g, "");
   const match = /^(\d+)(?:\.(\d+))?$/.exec(value);
   if (!match) return null;
   if ((match[2] ?? "").length > decimals) return null;

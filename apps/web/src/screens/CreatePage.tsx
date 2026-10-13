@@ -81,13 +81,13 @@ function daysWords(text: string): string {
 
 function opensWords(text: string): string {
   if (!/^\d+$/.test(text.trim())) return "–";
-  return Number(text) === 0 ? "about 30 s after you launch" : `${minutesWords(text)} after you launch`;
+  return Number(text) === 0 ? "about 2 min after you launch" : `${minutesWords(text)} after you launch`;
 }
 
-/** For after the launch exists: "in about 30 seconds", "in 5 min". */
+/** For after the launch exists: "in about 2 minutes", "in 5 min". */
 function opensInWords(text: string): string {
   if (!/^\d+$/.test(text.trim())) return "soon";
-  return Number(text) === 0 ? "in about 30 seconds" : `in ${minutesWords(text)}`;
+  return Number(text) === 0 ? "in about 2 minutes" : `in ${minutesWords(text)}`;
 }
 
 /* ---------- small pieces ---------- */

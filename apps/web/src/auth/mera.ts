@@ -3,6 +3,7 @@ import {
   createSecp256k1SigningSession,
   getPasskeyPrfOutput,
   type PasskeyCredentialMetadata,
+  type WebAuthnClient,
 } from "@category-labs/mera";
 import { toViemAccount } from "@category-labs/mera/viem";
 import { sha256 } from "@noble/hashes/sha2";
@@ -23,6 +24,7 @@ export function accountKeyFromPrf(prfOutput: Uint8Array): Uint8Array {
   return node.privateKey;
 }
 
+/** Last passkey used here: a hint for transports only. Sign-in never depends on it. */
 function storedCredential(): PasskeyCredentialMetadata | undefined {
   try {
     const raw = localStorage.getItem(CREDENTIAL_KEY);
@@ -33,37 +35,72 @@ function storedCredential(): PasskeyCredentialMetadata | undefined {
   }
 }
 
-export type PasskeySession = { account: LocalAccount; end: () => void };
+function rememberCredential(credential: PasskeyCredentialMetadata): void {
+  try {
+    localStorage.setItem(CREDENTIAL_KEY, JSON.stringify(credential));
+  } catch {
+    /* Site data blocked: only the hint is lost, the passkey still works. */
+  }
+}
+
+/** Disconnect: forget the hint. The passkey itself stays on the authenticator. */
+export function forgetPasskey(): void {
+  try {
+    localStorage.removeItem(CREDENTIAL_KEY);
+  } catch {
+    /* Site data blocked: nothing was saved. */
+  }
+}
+
+/** The browser's WebAuthn and this host unless given (tests pass a fake authenticator). */
+export type PasskeyOptions = { rpId?: string; webAuthnClient?: WebAuthnClient };
+
+function ceremony(options: PasskeyOptions) {
+  return { rpId: options.rpId ?? location.hostname, ...(options.webAuthnClient ? { webAuthnClient: options.webAuthnClient } : {}) };
+}
+
+export type PasskeySession = {
+  account: LocalAccount;
+  /** The passkey that signed this session in. The vault key must come from the same one. */
+  credential: PasskeyCredentialMetadata;
+  end: () => void;
+};
 
 /** Creates a passkey (first visit) or signs in with one; the private key lives only in memory. */
-export async function passkeyAccount(mode: "create" | "signIn"): Promise<PasskeySession> {
-  const rpId = location.hostname;
+export async function passkeyAccount(mode: "create" | "signIn", options: PasskeyOptions = {}): Promise<PasskeySession> {
+  const { rpId, ...client } = ceremony(options);
+  let credential: PasskeyCredentialMetadata;
   let prfOutput: Uint8Array;
   if (mode === "create") {
     const created = await createPasskeyWithPrfOutput({
       rp: { id: rpId, name: "Blindlaunch" },
       user: { name: "Blindlaunch account", displayName: "Blindlaunch" },
+      ...client,
     });
-    localStorage.setItem(CREDENTIAL_KEY, JSON.stringify({ credentialId: created.credentialId, transports: created.transports }));
+    credential = { credentialId: created.credentialId, ...(created.transports ? { transports: created.transports } : {}) };
     prfOutput = created.prfOutput;
   } else {
-    const credential = storedCredential();
-    const result = await getPasskeyPrfOutput(credential ? { rpId, credential } : { rpId });
-    localStorage.setItem(CREDENTIAL_KEY, JSON.stringify({ ...(credential ?? {}), credentialId: result.credentialId }));
+    // Discoverable request (no allowCredentials): the authenticator offers every Blindlaunch passkey,
+    // so making a second passkey never locks the first one out of this browser.
+    const result = await getPasskeyPrfOutput({ rpId, ...client });
+    const known = storedCredential();
+    credential = known?.credentialId === result.credentialId ? known : { credentialId: result.credentialId };
     prfOutput = result.prfOutput;
   }
+  rememberCredential(credential);
   const privateKey = accountKeyFromPrf(prfOutput);
   const session = createSecp256k1SigningSession({ privateKey });
   privateKey.fill(0);
-  return { account: toViemAccount(session) as LocalAccount, end: () => session.end() };
+  return { account: toViemAccount(session) as LocalAccount, credential, end: () => session.end() };
 }
 
-/** AES-GCM key from the passkey's vault namespace. One extra passkey prompt. */
-export async function passkeyVaultKey(): Promise<CryptoKey> {
-  const credential = storedCredential();
-  const rpId = location.hostname;
-  const { prfOutput } = await getPasskeyPrfOutput(credential ? { rpId, credential, prfSalt: VAULT_SALT } : { rpId, prfSalt: VAULT_SALT });
-  return crypto.subtle.importKey("raw", prfOutput, "AES-GCM", false, ["encrypt", "decrypt"]);
+/** AES-GCM key from the vault namespace of the passkey that signed this session in. One extra passkey prompt. */
+export async function passkeyVaultKey(credential: PasskeyCredentialMetadata, options: PasskeyOptions = {}): Promise<CryptoKey> {
+  const result = await getPasskeyPrfOutput({ ...ceremony(options), credential, prfSalt: VAULT_SALT });
+  // allowCredentials already limits the prompt to this passkey. Check anyway: a vault key from
+  // another passkey would seal bid notes that this account could never open.
+  if (result.credentialId !== credential.credentialId) throw new Error("Use the passkey you signed in with.");
+  return crypto.subtle.importKey("raw", result.prfOutput, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
 export function hasPasskey(): boolean {

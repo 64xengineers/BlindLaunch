@@ -1,8 +1,30 @@
 import { blindAuctionV2Abi, marketSeederAbi, type Deployment } from "@blindlaunch/abi";
-import { erc20Abi, type Address, type PublicClient } from "viem";
+import { BaseError, erc20Abi, type Address, type PublicClient } from "viem";
+import { shortAddress } from "./format";
 import { STATUS, type AuctionView, type BidView, type TokenMeta } from "./model";
 
 export const PAGE_SIZE = 20;
+/** Bids are read this many at a time, so a launch with thousands of bids does not hit the RPC all at once. */
+export const BID_PAGE = 500;
+
+/** Errors that mean the contract answered, but uselessly: it reverted, returned nothing, or returned data that does not decode. */
+const REFUSALS = new Set([
+  "ContractFunctionRevertedError",
+  "ContractFunctionZeroDataError",
+  "ExecutionRevertedError",
+  "AbiDecodingZeroDataError",
+  "AbiDecodingDataSizeTooSmallError",
+  "AbiDecodingDataSizeInvalidError",
+  "PositionOutOfBoundsError",
+  "IntegerOutOfRangeError",
+  "NegativeOffsetError",
+  "RecursiveReadLimitExceededError",
+]);
+
+/** True when asking again will not help. Network trouble is false, so callers retry instead of keeping a stand-in. */
+export function contractRefused(error: unknown): boolean {
+  return error instanceof BaseError && error.walk((cause) => cause instanceof Error && REFUSALS.has(cause.name)) !== null;
+}
 
 type Reader = Pick<PublicClient, "readContract">;
 
@@ -14,9 +36,15 @@ export function createReads(client: Reader, deployment: Deployment) {
     const key = address.toLowerCase();
     let meta = tokens.get(key);
     if (!meta) {
+      // Name and symbol are optional in ERC-20: a token that cannot give them shows its short address instead.
+      const label = (functionName: "name" | "symbol") =>
+        client.readContract({ address, abi: erc20Abi, functionName }).catch((error: unknown) => {
+          if (contractRefused(error)) return shortAddress(address);
+          throw error;
+        });
       meta = Promise.all([
-        client.readContract({ address, abi: erc20Abi, functionName: "name" }),
-        client.readContract({ address, abi: erc20Abi, functionName: "symbol" }),
+        label("name"),
+        label("symbol"),
         client.readContract({ address, abi: erc20Abi, functionName: "decimals" }),
       ]).then(([name, symbol, decimals]) => ({ address, name, symbol, decimals }));
       meta.catch(() => tokens.delete(key));
@@ -40,18 +68,23 @@ export function createReads(client: Reader, deployment: Deployment) {
   async function auction(id: bigint): Promise<AuctionView | null> {
     const raw = await client.readContract({ address: at, abi: blindAuctionV2Abi, functionName: "getAuction", args: [id] });
     if (raw.status === STATUS.None) return null;
-    const [sale, quote] = await Promise.all([token(raw.saleToken), token(raw.quoteToken)]);
-    return { ...raw, id, sale, quote };
+    try {
+      const [sale, quote] = await Promise.all([token(raw.saleToken), token(raw.quoteToken)]);
+      return { ...raw, id, sale, quote };
+    } catch (error) {
+      // No amount can be shown without decimals, so a launch whose token cannot give them is skipped instead of breaking every list.
+      if (contractRefused(error)) return null;
+      throw error;
+    }
   }
 
   async function bids(id: bigint, bidCount: number): Promise<BidView[]> {
-    return Promise.all(
-      Array.from({ length: bidCount }, (_, slot) =>
-        client
-          .readContract({ address: at, abi: blindAuctionV2Abi, functionName: "getBid", args: [id, slot] })
-          .then((bid) => ({ ...bid, slot })),
-      ),
-    );
+    const all: BidView[] = [];
+    for (let start = 0; start < bidCount; start += BID_PAGE) {
+      const count = Math.min(BID_PAGE, bidCount - start);
+      all.push(...(await Promise.all(Array.from({ length: count }, (_, i) => bid(id, start + i)))));
+    }
+    return all;
   }
 
   async function bid(id: bigint, slot: number): Promise<BidView> {

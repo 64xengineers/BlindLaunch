@@ -1,8 +1,9 @@
 import { getAddress } from "viem";
 import { describe, expect, it } from "vitest";
-import { STATUS, type AuctionView, type BidView, type Phase, type TokenMeta } from "../src/chain/model";
+import { SEED, STATUS, type AuctionView, type BidView, type Phase, type TokenMeta } from "../src/chain/model";
 import { AMOUNT_STEPS, bidReceipt, cleanLots, lotsForSpend, lotsOf, spendCap, spendPresets } from "../src/chain/receipt";
-import { moneyText, outcomeOf, priceText, tokensText, trackerOf, wholeLots } from "../src/components/auction";
+import { hasKuru, kuruRule, lotPriceText, moneyText, noSaleText, outcomeOf, phaseMessage, priceText, tipsFor, tokensText, trackerOf, unitText, wholeLots } from "../src/components/auction";
+import { loadView } from "../src/screens/AuctionPage";
 import { lootOf, money } from "../src/screens/ResultPage";
 
 const USDC: TokenMeta = { address: getAddress("0x00000000000000000000000000000000000000a5"), name: "USD Coin", symbol: "USDC", decimals: 6 };
@@ -292,7 +293,8 @@ describe("moneyText", () => {
   it("writes dollar quotes with a $ and two decimals, rounded down, with separators", () => {
     expect(moneyText(usd(500), USDC)).toBe("$500.00");
     expect(moneyText(1_234_567_890n, USDC)).toBe("$1,234.56");
-    expect(moneyText(1_234_567_890n, USDC, false)).toBe("$1,234");
+    // `cents: false` only drops decimals that are all zero.
+    expect(moneyText(1_234_567_890n, USDC, false)).toBe("$1,234.56");
     expect(moneyText(usd(1_000_000), USDC, false)).toBe("$1,000,000");
     expect(moneyText(0n, USDC)).toBe("$0.00");
     expect(moneyText((4995n * E18) / 10n, USDM)).toBe("$499.50");
@@ -305,7 +307,22 @@ describe("moneyText", () => {
   it("writes other quotes as an amount and the symbol, up to four decimals", () => {
     expect(moneyText(1234n * E18 + 567_891_234n * 10n ** 9n, WMON)).toBe("1,234.5678 WMON");
     expect(moneyText(500n * E18, WMON)).toBe("500 WMON");
-    expect(moneyText(1234n * E18 + E18 / 2n, WMON, false)).toBe("1,234 WMON");
+    expect(moneyText(1234n * E18 + E18 / 2n, WMON, false)).toBe("1,234.5 WMON");
+  });
+
+  it("never cuts bid money to whole units: $12.50 stays $12.50 and 0.05 WMON stays 0.05 WMON", () => {
+    expect(moneyText(usd(12.5), USDC, false)).toBe("$12.50");
+    expect(moneyText(E18 / 20n, WMON, false)).toBe("0.05 WMON");
+    expect(moneyText(E18 / 20n, WMON)).toBe("0.05 WMON");
+    expect(moneyText(usd(1000), USDC, false)).toBe("$1,000");
+    expect(moneyText(500n * E18, WMON, false)).toBe("500 WMON");
+  });
+
+  it("keeps two significant digits for amounts under one unit, so they never read as zero", () => {
+    expect(moneyText(12_340_000_000_000n, WMON)).toBe("0.000012 WMON"); // 0.00001234
+    expect(moneyText(1_200_000_000_000_000n, USDM)).toBe("$0.0012");
+    expect(moneyText(1_000n, USDC, false)).toBe("$0.001");
+    expect(moneyText(usd(0.05), USDC)).toBe("$0.05");
   });
 });
 
@@ -318,9 +335,28 @@ describe("priceText", () => {
     expect(priceText(cents, 16_000n)).toBe("$0.016");
   });
 
-  it("caps at six decimals, rounding down", () => {
-    const fine = auction({ quote: USDM, minPrice: 1n, stepSize: 1n });
+  it("caps at six decimals, rounding down, when six still tell the options apart", () => {
+    const fine = auction({ quote: USDM, minPrice: 1_234_567_891_234_567_891n, stepSize: E18 / 100n });
     expect(priceText(fine, 1_234_567_891_234_567_891n)).toBe("$1.234567");
+    const odd = auction({ minPrice: 12_345n, stepSize: 1_000n }); // $0.012345, 6-decimal USDC
+    expect(priceText(odd, 12_345n)).toBe("$0.012345");
+  });
+
+  it("shows tiny prices with enough digits: never zero, and no two options look the same", () => {
+    // 0.000000001 USDM a step: six decimals would show every option as $0.000000.
+    const tiny = auction({ quote: USDM, minPrice: 10n ** 9n, stepSize: 10n ** 9n });
+    const shown = [0, 1, 2].map((step) => priceText(tiny, 10n ** 9n * BigInt(step + 1)));
+    expect(shown).toEqual(["$0.000000001", "$0.000000002", "$0.000000003"]);
+    const wmon = auction({ quote: WMON, minPrice: 5n * 10n ** 10n, stepSize: 10n ** 10n });
+    expect(priceText(wmon, 5n * 10n ** 10n)).toBe("0.00000005 WMON");
+    expect(priceText(wmon, 6n * 10n ** 10n)).toBe("0.00000006 WMON");
+    // A 1-wei ladder: options differ only in the last digit, so every digit shows.
+    const wei = auction({ quote: USDM, minPrice: 1n, stepSize: 1n });
+    expect(priceText(wei, 1_234_567_891_234_567_891n)).toBe("$1.234567891234567891");
+    expect(priceText(wei, 1_234_567_891_234_567_892n)).not.toBe(priceText(wei, 1_234_567_891_234_567_891n));
+    // A long lowest price keeps four significant digits even below the sixth decimal.
+    const long = auction({ quote: USDM, minPrice: 123_456_789n, stepSize: 10n ** 8n });
+    expect(priceText(long, 123_456_789n)).toBe("$0.0000000001234");
   });
 
   it("writes other quotes with the symbol and no forced decimals", () => {
@@ -360,5 +396,87 @@ describe("trackerOf", () => {
       cancelled: { now: "unlock", bad: true, done: false },
     };
     for (const phase of Object.keys(expected) as Phase[]) expect(trackerOf(phase), phase).toEqual(expected[phase]);
+  });
+});
+
+describe("prices per lot", () => {
+  it("says the unit when one lot is a pack, and stays short for whole tokens", () => {
+    const packs = auction({ lotSize: 1000n * E18 });
+    expect(unitText(auction())).toBe("token");
+    expect(unitText(packs)).toBe("pack of 1,000 NCAT");
+    expect(unitText(auction({ lotSize: E18 / 2n }))).toBe("pack of 0.5 NCAT");
+    expect(lotPriceText(auction(), usd(2.7))).toBe("$2.70");
+    expect(lotPriceText(packs, usd(2.7))).toBe("$2.70 per pack of 1,000 NCAT");
+  });
+
+  it("says the final price per pack in the settled message", () => {
+    const packs = settled({ lotSize: 1000n * E18 });
+    expect(phaseMessage("settled", packs, 0n)).toBe("Final price $2.70 per pack of 1,000 NCAT for everyone. Winners can collect.");
+    expect(phaseMessage("settled", settled(), 0n)).toBe("Final price $2.70 for everyone. Winners can collect.");
+  });
+});
+
+describe("Kuru rules and tips", () => {
+  const kuru = { seedSaleLots: 100n, seedQuoteBps: 2500, seedLockUntil: 2_000_000_000n };
+
+  it("promises only tokens left unsold, up to the set amount, before settle", () => {
+    const text = kuruRule(auction(kuru));
+    expect(text).toContain("up to 100 NCAT from the tokens left unsold");
+    expect(text).toContain("25% of the money raised");
+    expect(text).toMatch(/^Opens at the final price if anything sells/);
+    expect(kuruRule(auction({ ...kuru, seedSaleLots: 0n }))).not.toContain("NCAT");
+  });
+
+  it("shows the real amounts after settle: min(seedSaleLots, unsold) lots", () => {
+    // 1000 lots, 980 sold: only 20 unsold, so Kuru gets 20 NCAT, not 100.
+    const a = settled({ ...kuru, totalSold: 980n, seedState: SEED.Reserved, seedSale: 20n * E18, seedQuote: usd(661.5) });
+    const text = kuruRule(a);
+    expect(text).toContain("20 NCAT and $661.50");
+    expect(text).not.toContain("100 NCAT");
+    expect(kuruRule(settled({ ...kuru, totalSold: 0n, seedState: SEED.None }))).toBe("No market: nothing was sold");
+    expect(kuruRule(auction({ ...kuru, status: STATUS.Cancelled }))).toBe("No market: the launch was called off");
+  });
+
+  it("says Kuru is not set up, and never shows the Kuru tip, on launches without Kuru", () => {
+    expect(hasKuru(auction())).toBe(false);
+    expect(kuruRule(auction())).toBe("Not set up for this launch");
+    expect(tipsFor(false).some((tip) => tip.includes("Kuru"))).toBe(false);
+    expect(hasKuru(auction(kuru))).toBe(true);
+    expect(tipsFor(true).some((tip) => tip.includes("Kuru"))).toBe(true);
+    expect(tipsFor(true).length).toBe(tipsFor(false).length + 1);
+  });
+});
+
+describe("launches that sold nothing or got no bids", () => {
+  it("gives a possible reason for a no-sale result and promises no money back to forfeited bids", () => {
+    const none = settled({ totalSold: 0n, bidCount: 3, forfeitedTotal: 0n });
+    expect(noSaleText(none)).toBe("None of the bids counted, so nothing was sold. Every bidder gets all their bid money back.");
+    expect(noSaleText(none)).not.toContain("lowest price");
+    const cheat = settled({ totalSold: 0n, bidCount: 3, forfeitedTotal: usd(1000) });
+    expect(noSaleText(cheat)).toContain("Bids that broke the rules lose their bid money");
+    expect(noSaleText(cheat)).not.toMatch(/everyone/i);
+    expect(phaseMessage("settled", cheat, 0n)).toBe(noSaleText(cheat));
+  });
+
+  it("says plainly that nobody bid, never that bids are unlocking or keys never came", () => {
+    const empty = auction({ bidCount: 0 });
+    expect(noSaleText(settled({ totalSold: 0n, bidCount: 0 }))).toMatch(/^Nobody bid/);
+    expect(phaseMessage("awaitingKeys", empty, 300n)).toBe("Bidding closed with no bids. Nothing will be sold.");
+    expect(phaseMessage("cancellable", empty, 950n)).toBe("Bidding closed with no bids. Anyone can call the launch off now.");
+    expect(phaseMessage("awaitingKeys", auction({ bidCount: 2 }), 300n)).toMatch(/Every bid unlocks by itself/);
+  });
+});
+
+describe("launch page loading", () => {
+  it("says 'does not exist' only when the contract has no such launch", () => {
+    expect(loadView(null, null, false)).toBe("missing");
+    expect(loadView(null, "network down", false)).toBe("missing");
+  });
+
+  it("shows a retryable error, not 'does not exist', when the read failed", () => {
+    expect(loadView(undefined, "HTTP request failed.", false)).toBe("failed");
+    expect(loadView(undefined, null, true)).toBe("loading");
+    expect(loadView(undefined, null, false)).toBe("loading");
+    expect(loadView({ auction: 1 }, "a later poll failed", false)).toBe("ready");
   });
 });

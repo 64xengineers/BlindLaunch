@@ -6,8 +6,11 @@ const MAX_AMOUNT = 2n ** 128n - 1n;
 const MAX_LOTS = 2n ** 96n - 1n;
 const MAX_BIDS = 65_535;
 const DAY = 86_400;
-/** Gap between the chain time read just before sending and `commitStart`, so the transaction lands in time. */
-export const START_BUFFER = 30n;
+/**
+ * Gap between the chain time read just before sending and `commitStart`, so the transaction still lands
+ * before bidding opens when the wallet takes a while to confirm (`commitStart < block.timestamp` reverts).
+ */
+export const START_BUFFER = 120n;
 
 export type CreateForm = {
   supplyTokens: string;

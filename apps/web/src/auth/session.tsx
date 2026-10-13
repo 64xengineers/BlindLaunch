@@ -4,7 +4,7 @@ import { publicClient } from "../chain/clients";
 import { network } from "../chain/config";
 import type { Writer } from "../state/actions";
 import { createWalletDiscovery, type WalletOption } from "./eip6963";
-import { passkeyAccount, passkeyVaultKey, type PasskeySession } from "./mera";
+import { forgetPasskey, passkeyAccount, passkeyVaultKey, type PasskeySession } from "./mera";
 
 export type Signer =
   | { kind: "injected"; address: Address; walletClient: WalletClient; wallet: WalletOption }
@@ -24,6 +24,30 @@ type SessionValue = {
 };
 
 const WALLET_KEY = "blindlaunch:v2:wallet";
+let walletInMemory: string | null = null;
+
+/** The wallet to reconnect silently. Blocked site data must not blank the app, so memory backs it up for this tab. */
+export function savedWallet(): string | null {
+  try {
+    const saved = localStorage.getItem(WALLET_KEY);
+    if (saved !== null) return saved;
+  } catch {
+    /* Site data blocked: fall back to memory. */
+  }
+  return walletInMemory;
+}
+
+/** Remembers (or with null forgets) the wallet to reconnect. Never throws. */
+export function saveWallet(rdns: string | null): void {
+  walletInMemory = rdns;
+  try {
+    if (rdns === null) localStorage.removeItem(WALLET_KEY);
+    else localStorage.setItem(WALLET_KEY, rdns);
+  } catch {
+    /* Site data blocked: the choice lasts for this tab only. */
+  }
+}
+
 const discovery = typeof window === "undefined" ? null : createWalletDiscovery(window, window.ethereum);
 const SessionContext = createContext<SessionValue | null>(null);
 
@@ -71,12 +95,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   );
   const [signer, setSigner] = useState<Signer | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
-  const [vault, setVault] = useState<CryptoKey | null>(null);
+  // The vault key belongs to the passkey session that derived it, never to a later one.
+  const [vault, setVault] = useState<{ session: PasskeySession; key: CryptoKey } | null>(null);
 
   // Silent reconnect: eth_accounts never opens a wallet prompt.
   useEffect(() => {
     if (signer) return;
-    const rdns = localStorage.getItem(WALLET_KEY);
+    const rdns = savedWallet();
     const wallet = rdns ? discovery?.find(rdns) : undefined;
     if (!wallet) return;
     void (wallet.provider.request({ method: "eth_accounts" }) as Promise<Address[]>).then((accounts) => {
@@ -108,13 +133,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const accounts = (await wallet.provider.request({ method: "eth_requestAccounts" })) as Address[];
     if (!accounts[0]) throw new Error("The wallet returned no account.");
     await ensureChain(wallet.provider);
-    localStorage.setItem(WALLET_KEY, rdns);
+    saveWallet(rdns);
     setSigner(injectedSigner(wallet, accounts[0]));
   }, []);
 
   const signInWithPasskey = useCallback(async (mode: "create" | "signIn") => {
     const session = await passkeyAccount(mode);
-    localStorage.removeItem(WALLET_KEY);
+    saveWallet(null);
     setVault(null);
     setSigner({
       kind: "passkey",
@@ -125,8 +150,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const disconnect = useCallback(() => {
-    if (signer?.kind === "passkey") signer.session.end();
-    localStorage.removeItem(WALLET_KEY);
+    if (signer?.kind === "passkey") {
+      signer.session.end();
+      forgetPasskey();
+    }
+    saveWallet(null);
     setVault(null);
     setSigner(null);
   }, [signer]);
@@ -140,9 +168,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const vaultKey = useCallback(async () => {
     if (signer?.kind !== "passkey") return null;
-    if (vault) return vault;
-    const key = await passkeyVaultKey();
-    setVault(key);
+    const { session } = signer;
+    if (vault?.session === session) return vault.key;
+    const key = await passkeyVaultKey(session.credential);
+    setVault({ session, key });
     return key;
   }, [signer, vault]);
 

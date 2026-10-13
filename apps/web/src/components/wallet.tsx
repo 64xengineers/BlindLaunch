@@ -30,6 +30,20 @@ export function useBalance(): string {
 
 const FOCUSABLE = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
+/**
+ * Where Tab (or Shift+Tab) should move focus so it never leaves the dialog; null lets the browser
+ * move it. Focus outside the dialog (for example on <body> after the focused button was swapped out
+ * when a sign-in started) is pulled back in.
+ */
+export function trapTab<T>(items: readonly T[], active: T | null, dialog: T, inside: boolean, back: boolean): T | null {
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (first === undefined || last === undefined) return dialog;
+  if (!inside) return back ? last : first;
+  if (back) return active === first || active === dialog ? last : null;
+  return active === last ? first : null;
+}
+
 /** The Connect modal: a passkey (no app needed) or a browser wallet; when signed in, the account and Disconnect. */
 export function WalletPicker({ onClose, title }: { onClose: () => void; title?: string }) {
   const { signer, wallets, connectWallet, signInWithPasskey, disconnect } = useSession();
@@ -50,20 +64,21 @@ export function WalletPicker({ onClose, title }: { onClose: () => void; title?: 
       if (event.key === "Escape") onClose();
       if (event.key !== "Tab" || !dialog.current) return;
       const items = Array.from(dialog.current.querySelectorAll<HTMLElement>(FOCUSABLE));
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (!first || !last) return;
-      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const target = trapTab(items, active, dialog.current, dialog.current.contains(active), event.shiftKey);
+      if (!target) return;
+      event.preventDefault();
+      target.focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Starting a sign-in swaps the focused button out; keep focus inside the dialog when that happens.
+  useEffect(() => {
+    const box = dialog.current;
+    if (box && !box.contains(document.activeElement)) box.focus();
+  }, [pending, problem, signer]);
 
   async function attempt(label: string, action: () => Promise<void>) {
     setPending(label);

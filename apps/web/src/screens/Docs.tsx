@@ -8,7 +8,7 @@ const calls = [
   ["Bid", "Read keeperKeysOf(id). Seal with @blindlaunch/sealed-bid: seal({ chainId, contract, auctionId, bidder, step, quantity, keeperKeys }). Approve the deposit, then commit(id, R, c, h)."],
   ["Open", "After commitDeadline two keepers call publishKey. Anyone then calls openMany(id, slots, sharedA, sharedB) with sharedPoint(publishedKey, R) for the frozen pair."],
   ["Settle", "When every bid is open, anyone calls settle(id). It reads storage only."],
-  ["Market", "If seeding is on, anyone calls handOffSeed(id); MarketSeeder opens a Kuru market at the clearing price. After the lock, anyone calls MarketSeeder.unwind(id) to pay the creator."],
+  ["Market", "If seeding is on, anyone calls handOffSeed(id), which only hands the reserved seed to MarketSeeder. Anyone then calls MarketSeeder.seed(id) to open the Kuru market at the clearing price. Where only Kuru may create markets, as on Monad mainnet, call MarketSeeder.seedInto(id, market) instead, with an existing market that Kuru's Router verifies. After the lock, anyone calls MarketSeeder.unwind(id) to pay the creator."],
   ["Claim", "Bidders call claim(id), or claimRefund / claimTokens for one leg. The creator calls reclaim(id), or reclaimUnsold / reclaimProceeds."],
   ["Cancel", "If two keys are not published by cancelAfter, anyone calls cancel(id) and every deposit is refunded."],
 ];
@@ -62,7 +62,12 @@ R = r·G,  c_i = y_i XOR keccak256(abi.encodePacked(r·P_i, uint8(i)))
 commit(auctionId, R, [c_0, c_1, c_2], h)`}</pre>
         <p className="m-0 mt-4 flex items-start gap-3 text-muted">
           <Icon name="alert" size={20} className="mt-0.5 text-coral" />
-          <span>A bid whose decryption does not match h is forfeited. Check your seal with <code>verifySealed()</code> before sending.</span>
+          <span>
+            A bid whose decryption does not match h is forfeited. Before sending, call{" "}
+            <code>{"verifySealed(sealed, keeperKeys, { chainId, contract, auctionId, bidder })"}</code> with the wallet that sends commit as
+            bidder. It opens the bid under all three keeper pairs and recomputes h for that chain, contract, auction and bidder. Without the
+            last argument it does not check h.
+          </span>
         </p>
       </DocPanel>
 

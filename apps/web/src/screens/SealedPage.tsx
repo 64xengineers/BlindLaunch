@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useSession } from "../auth/session";
 import { noteKey, openNote, readNote, type BidNote } from "../bids/vault";
@@ -6,7 +6,7 @@ import { reads } from "../chain/clients";
 import { explorerUrl, network } from "../chain/config";
 import { formatDate, shortAddress } from "../chain/format";
 import { priceAt, type AuctionView } from "../chain/model";
-import { moneyText, priceText, Tip, tokensText, VerifyLinks } from "../components/auction";
+import { hasKuru, moneyText, priceText, Tip, tokensText, VerifyLinks } from "../components/auction";
 import { Bubble, CopyButton, Hush, Icon, Panel, PrimaryButton, PrimaryLink, Receipt, ReceiptRow, SecondaryButton, TokenArt, Tracker, timeLeft } from "../components/ui";
 import { openConnect } from "../state/connect";
 import { friendlyError } from "../state/errors";
@@ -25,14 +25,17 @@ export function SealedPage() {
   const valid = id !== undefined && /^\d+$/.test(id) && reads !== null;
   const auctionId = valid ? BigInt(id) : 0n;
   const account = signer?.address ?? null;
-  const { data } = usePolling(
+  // Trying again starts the load from scratch, so the page shows loading while it tries.
+  const [attempt, retry] = useReducer((value: number) => value + 1, 0);
+  const { data, error, loading } = usePolling(
     valid ? async () => {
       const auction = await reads!.auction(auctionId);
       const slot = auction && account ? await reads!.slotOf(auctionId, account) : null;
       return { auction, slot };
     } : null,
-    [auctionId, account],
+    [auctionId, account, attempt],
   );
+  const failed = data === undefined && error !== null && !loading;
   if (!valid) return <NotFound />;
   const auction = data?.auction ?? null;
   const commitTx = state?.commitTx ?? null;
@@ -59,6 +62,7 @@ export function SealedPage() {
 
   // Only say "Bid locked" to a wallet that really has a bid here.
   if (!commitTx && (account === null || data?.slot === null)) return <NoBid id={id!} signedIn={account !== null} />;
+  if (!commitTx && failed) return <LoadFailed id={id!} error={error} onRetry={retry} />;
   if (!commitTx && data === undefined) return <div className="au-page"><div className="shimmer h-72" aria-label="Loading" /></div>;
 
   return (
@@ -125,6 +129,12 @@ export function SealedPage() {
               </div>
             ) : null}
           </dl>
+          {failed ? (
+            <p className="au-help is-bad" role="alert">
+              Couldn't load this launch. {error}{" "}
+              <button type="button" className="font-bold text-yellow underline underline-offset-4" onClick={retry}>Try again</button>
+            </p>
+          ) : null}
 
           {stored ? (
             <div className="mt-4">
@@ -146,7 +156,7 @@ export function SealedPage() {
         <SecondaryButton to="/bids" icon="grid">My bids</SecondaryButton>
       </div>
 
-      <Tip className="rise d4" />
+      <Tip className="rise d4" kuru={auction ? hasKuru(auction) : false} />
 
       {auction ? (
         <div className="mt-8">
@@ -191,6 +201,25 @@ function NoteReceipt({ auction, note }: { auction: AuctionView; note: BidNote })
         You asked for {tokensText(auction, lots)} at up to {priceText(auction, priceAt(auction, note.step))}. Only your passkey can open this note.
       </p>
     </>
+  );
+}
+
+/** Reading the bid failed: say so plainly and offer to try again, never an endless shimmer. */
+function LoadFailed({ id, error, onRetry }: { id: string; error: string | null; onRetry: () => void }) {
+  return (
+    <div className="au-page">
+      <Panel large accent className="mx-auto mt-6 grid max-w-[46rem] grid-cols-[auto_1fr] items-center gap-6 p-8">
+        <Hush pose="error" size={130} />
+        <div className="min-w-0" role="alert">
+          <h1 className="m-0 text-[40px] font-bold leading-none">Couldn't load your bid</h1>
+          <p className="mt-3 mb-0 text-[18px] text-muted">{error} Your bid and money are safe on chain.</p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <PrimaryButton className="w-auto" icon="return" onClick={onRetry}>Try again</PrimaryButton>
+            <SecondaryButton to={`/auction/${id}`} icon="chevron-left">Back to the launch</SecondaryButton>
+          </div>
+        </div>
+      </Panel>
+    </div>
   );
 }
 

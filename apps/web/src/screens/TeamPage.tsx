@@ -1,10 +1,10 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useSession } from "../auth/session";
 import { reads } from "../chain/clients";
 import { phaseOf, type AuctionView, type Phase } from "../chain/model";
 import { PrimaryButton, PrimaryLink, SecondaryButton, timeLeft, type StickerTone } from "../components/ui";
 import { useNow, usePolling } from "../state/hooks";
-import { Empty, launchPath, ListFrame, ListLoading, MissionRow, SCAN_PAGES } from "./MyBids";
+import { Empty, launchPath, ListFrame, ListLoading, ListProblem, listView, MissionRow, SCAN_PAGES, scanReach, useRetry } from "./MyBids";
 import { openConnect } from "../state/connect";
 import { money } from "./ResultPage";
 
@@ -47,33 +47,47 @@ export function TeamPage() {
   const { signer } = useSession();
   const account = signer?.address ?? null;
   const now = useNow();
-  const { data, loading } = usePolling(
+  const [pages, setPages] = useState(SCAN_PAGES);
+  const [attempt, retry] = useRetry();
+  const { data, loading, error } = usePolling(
     reads && account ? async () => {
       const next = await reads!.nextAuctionId();
-      const ids = (await Promise.all(Array.from({ length: SCAN_PAGES }, (_, page) => reads!.pageIds(page, next)))).flat();
+      const ids = (await Promise.all(Array.from({ length: pages }, (_, page) => reads!.pageIds(page, next)))).flat();
       const auctions = await Promise.all(ids.map((id) => reads!.auction(id)));
-      return auctions.filter((a): a is AuctionView => a !== null && a.authority.toLowerCase() === account.toLowerCase());
+      const launches = auctions.filter((a): a is AuctionView => a !== null && a.authority.toLowerCase() === account.toLowerCase());
+      return { launches, ...scanReach(next, pages) };
     } : null,
-    [account],
+    [account, pages, attempt],
     10_000,
   );
-  const some = data !== undefined && data.length > 0;
+  const view = listView({ account, ready: reads !== null, loading, error, count: data?.launches.length });
+  const further = () => setPages((value) => value + SCAN_PAGES);
   return (
-    <ListFrame title="My launches" aside={some ? <PrimaryLink to="/create" icon="plus">Create a launch</PrimaryLink> : null}>
-      {!account ? (
+    <ListFrame title="My launches" aside={view === "list" ? <PrimaryLink to="/create" icon="plus">Create a launch</PrimaryLink> : null}>
+      {view === "signIn" ? (
         <Empty pose="idle" say={<>Sign in with the wallet or passkey that <b>creates your launches.</b></>}>
           <PrimaryButton className="w-auto" icon="fingerprint" onClick={openConnect}>Sign in</PrimaryButton>
         </Empty>
       ) : null}
-      {account && loading && !data ? <ListLoading /> : null}
-      {data && data.length === 0 ? (
-        <Empty pose="excited" say={<>You haven't launched anything yet. One token, one price for everyone, <b>no bots.</b></>}>
-          <PrimaryLink to="/create" icon="plus">Create a launch</PrimaryLink>
-        </Empty>
+      {view === "loading" ? <ListLoading /> : null}
+      {view === "offline" || view === "error" ? <ListProblem view={view} what="your launches" error={error} onRetry={retry} /> : null}
+      {data && view === "empty" ? (
+        data.all ? (
+          <Empty pose="excited" say={<>You haven't launched anything yet. One token, one price for everyone, <b>no bots.</b></>}>
+            <PrimaryLink to="/create" icon="plus">Create a launch</PrimaryLink>
+          </Empty>
+        ) : (
+          <Empty pose="waiting" say={<>None of the newest <b className="num">{data.scanned}</b> launches are yours. Look further back for older ones.</>}>
+            <div className="flex flex-wrap items-center gap-4">
+              <PrimaryButton className="w-auto" icon="chevron-down" onClick={further}>Look further back</PrimaryButton>
+              <SecondaryButton to="/create" icon="plus">Create a launch</SecondaryButton>
+            </div>
+          </Empty>
+        )
       ) : null}
-      {some ? (
+      {data && view === "list" ? (
         <ul className="mylist">
-          {data.map((auction) => {
+          {data.launches.map((auction) => {
             const phase = phaseOf(auction, now);
             const row = rowFor(auction, phase, now);
             const to = launchPath(auction, phase);
@@ -91,6 +105,12 @@ export function TeamPage() {
             );
           })}
         </ul>
+      ) : null}
+      {data && view === "list" && !data.all ? (
+        <div className="mt-6 flex flex-wrap items-center gap-4">
+          <SecondaryButton icon="chevron-down" onClick={further}>Look further back</SecondaryButton>
+          <span className="text-[15px] text-muted">Checked the newest <span className="num">{data.scanned}</span> launches.</span>
+        </div>
       ) : null}
     </ListFrame>
   );
