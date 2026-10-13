@@ -18,3 +18,10 @@ id.json
 # OS and editor
 .DS_Store
 *.log
+
+# Local anvil deployments
+deployments/31337.json
+
+# Keeper secrets
+apps/keeper/*.env
+apps/keeper/*.keys.json
