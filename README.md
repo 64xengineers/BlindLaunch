@@ -66,6 +66,16 @@ Deploy transaction for the auction contract: `0xc5d4c2674abc3c1085560cc502bb6d44
 
 Explorer: [auction on Monadscan](https://testnet.monadscan.com/address/0xacC12B4bdae66Ef42939340Fa1811BD629F18cC2).
 
+**Source verified (13 Oct 2026).** All three contracts are verified on Sourcify with `exact_match` (solc 0.8.28, cancun, optimizer 200 runs), so explorers show the readable source. Check: `https://sourcify-api-monad.blockvision.org/v2/contract/10143/<address>`. After a redeploy, verify again from `contracts/`:
+
+```bash
+forge verify-contract <AUCTION_ADDRESS> src/BlindAuction.sol:BlindAuction \
+  --chain 10143 --verifier sourcify --verifier-url https://sourcify-api-monad.blockvision.org/
+forge verify-contract <TOKEN_ADDRESS> src/TestERC20.sol:TestERC20 \
+  --chain 10143 --verifier sourcify --verifier-url https://sourcify-api-monad.blockvision.org/ \
+  --constructor-args $(cast abi-encode "constructor(string,string)" "Blindlaunch Sale" "SALE")
+```
+
 ### Step 3 — Run one auction and one refund
 
 **Status: complete.** Confirmed 2026-10-10. Both auctions are finished. Do not settle or cancel them again.
@@ -130,7 +140,11 @@ Screens, one file each in `apps/web/src/screens`:
 
 Shared code: `src/auction.tsx` (chain state and actions, `actOn` for any auction id, `loadMyBids`), `src/wallet.ts` (MetaMask, network switch, test-token mint and approve), `src/clearing.ts` (browser copy of the clearing rule for the sandbox, bot demo and charts), `src/components/ui.tsx` (navbar with mobile menu, chart, countdown, toast, footer), `src/components/sections.tsx` (sandbox, steps, comparison, FAQ, Monad facts), `src/components/trust.tsx` (bot race demo, privacy and trust, risks, costs, verify panel, status bar, reminders, rules).
 
-Browser storage, per wallet: `blindlaunch:bid:<auctionId>:<account>` holds the price step, quantity, salt, and seal and reveal transaction hashes. Reveal reads it, so a page reload no longer breaks reveal. The older `blindlaunch:salt:<auctionId>:<account>` key is still read as a fallback. `blindlaunch:meta:<auctionId>` holds the name and description typed at creation; the contract stores no text, so only the creating browser shows it. `blindlaunch:reminders` holds close reminders, which fire as browser notifications while a tab is open.
+Browser storage, per wallet: `blindlaunch:bid:<auctionId>:<account>` holds the price step, quantity, salt, and seal and reveal transaction hashes. Reveal reads it, so a page reload no longer breaks reveal. The older `blindlaunch:salt:<auctionId>:<account>` key is still read as a fallback.
+
+Salt: unless the user types a custom salt, the salt is `keccak256(signature)` of a fixed per-auction message (`saltMessage` in `src/wallet.ts`: auction id, contract, chain). EOA signatures are deterministic, so the same wallet recreates the same salt on any device. If no saved bid exists at reveal time, the card asks only for the token amount, re-signs, tries every price step against the on-chain commitment, and reveals the match. Bids sealed before this change still need the browser that sealed them. Smart-contract wallets may not sign deterministically.
+
+New auctions from the create form use 64 bid slots (the contract maximum), so a few wallets cannot fill an auction to block others. Auctions created earlier keep 8. `blindlaunch:meta:<auctionId>` holds the name and description typed at creation; the contract stores no text, so only the creating browser shows it. `blindlaunch:reminders` holds close reminders, which fire as browser notifications while a tab is open.
 
 Before sealing, the bid form blocks what the contract would reject or not count: the creator bidding, a full auction, a second bid from the same wallet, quantity 0, price × quantity above `min(deposit, maxNotional)`, an invalid salt, and the last 15 seconds before `commitDeadline` (the browser clock can differ from block time). `src/clearing.ts` matches `UniformClearing.sol`, including multi-pass dust to earlier slots, and reproduces the worked example below. Before settlement the chart labels its estimate "If settled now".
 

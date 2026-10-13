@@ -40,7 +40,7 @@ export function BidSealed() {
             </p>
           </div>
         ) : null}
-        <p className="mt-4 rounded-xl border border-amber/30 bg-amber/10 p-3 text-sm text-paper">Keep using this browser. The secret salt that unlocks your bid is saved here.</p>
+        <p className="mt-4 rounded-xl border border-amber/30 bg-amber/10 p-3 text-sm text-paper">Your secret salt comes from a free wallet signature, so this wallet can recover it on any device. Note the number of tokens you bid in case you reveal from another browser.</p>
       </GlassCard>
 
       <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">

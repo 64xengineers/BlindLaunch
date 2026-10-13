@@ -153,6 +153,18 @@ export const quoteTokenAddress = "0x...";  // QuoteToken
 
 Restart `pnpm dev`. The app now reads your contracts. The demo auction's deadlines default to 1, 2 and 3 hours. Set `COMMIT_DELAY_SECONDS`, `REVEAL_DELAY_SECONDS` and `CANCEL_DELAY_SECONDS` in `.env` to shorten them.
 
+Verify the new contracts so explorers show their source (no API key needed):
+
+```bash
+forge verify-contract <BlindAuction address> src/BlindAuction.sol:BlindAuction \
+  --chain 10143 --verifier sourcify --verifier-url https://sourcify-api-monad.blockvision.org/
+forge verify-contract <SaleToken address> src/TestERC20.sol:TestERC20 \
+  --chain 10143 --verifier sourcify --verifier-url https://sourcify-api-monad.blockvision.org/ \
+  --constructor-args $(cast abi-encode "constructor(string,string)" "Blindlaunch Sale" "SALE")
+```
+
+Repeat the second command for the quote token with `"Blindlaunch Quote" "QUOTE"`. Each should end with `Status: exact_match`.
+
 ## Never commit
 
 - `.env` (private keys)

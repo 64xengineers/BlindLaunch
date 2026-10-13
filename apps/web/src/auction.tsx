@@ -8,8 +8,8 @@ import {
   ensureAllowance,
   ensureTokenBalance,
   hashBid,
+  deriveSalt,
   publicClient,
-  randomSalt,
   saltKey,
   writeContract,
 } from "./wallet";
@@ -160,7 +160,7 @@ async function loadAuctions(): Promise<Auction[]> {
   return auctions.reverse();
 }
 
-export type StoredBid = { step: number; quantity: string; salt: string; commitTx?: string; revealTx?: string };
+export type StoredBid = { step: number; quantity: string; salt: string; derived?: boolean; commitTx?: string; revealTx?: string };
 
 function storedBidKey(auctionId: bigint | string, account: string) {
   return `blindlaunch:bid:${auctionId.toString()}:${account.toLowerCase()}`;
@@ -382,12 +382,13 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
     if (!account || !selected) return false;
     const step = Number(priceStep);
     const qty = BigInt(quantity);
-    const nextSalt = (/^0x[0-9a-fA-F]{64}$/.test(salt) ? salt : randomSalt()) as `0x${string}`;
-    localStorage.setItem(saltKey(selected.id.toString(), account), nextSalt);
-    setSalt(nextSalt);
-    writeStoredBid(selected.id, account, { step, quantity: qty.toString(), salt: nextSalt });
-    const commitment = hashBid(selected.id, account, step, qty, nextSalt);
+    const custom = /^0x[0-9a-fA-F]{64}$/.test(salt) ? (salt as `0x${string}`) : null;
     await run("Seal bid", async () => {
+      const nextSalt = custom ?? (await deriveSalt(account, selected.id));
+      localStorage.setItem(saltKey(selected.id.toString(), account), nextSalt);
+      setSalt(nextSalt);
+      writeStoredBid(selected.id, account, { step, quantity: qty.toString(), salt: nextSalt, derived: custom === null });
+      const commitment = hashBid(selected.id, account, step, qty, nextSalt);
       await ensureTokenBalance(account, quoteTokenAddress, selected.deposit);
       await ensureAllowance(account, quoteTokenAddress, selected.deposit);
       const hash = await writeContract(account, {
@@ -404,10 +405,30 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
   async function reveal() {
     if (!account || !selected) return;
     const stored = readStoredBid(selected.id, account);
-    const storedSalt = stored?.salt || localStorage.getItem(saltKey(selected.id.toString(), account)) || salt;
-    const step = stored ? stored.step : Number(priceStep);
-    const qty = stored ? BigInt(stored.quantity) : BigInt(quantity);
+    const knownSalt = stored?.salt || localStorage.getItem(saltKey(selected.id.toString(), account)) || salt;
     await run("Reveal bid", async () => {
+      let step: number;
+      let qty: bigint;
+      let storedSalt = knownSalt as `0x${string}`;
+      if (stored?.salt) {
+        step = stored.step;
+        qty = BigInt(stored.quantity);
+      } else {
+        const commitment = bids.find((bid) => bid.bidder.toLowerCase() === account.toLowerCase())?.commitment;
+        if (!commitment) throw new Error("This wallet has no sealed bid in this auction.");
+        if (!/^\d+$/.test(quantity) || BigInt(quantity) === 0n) {
+          throw new Error("Enter the number of tokens you bid so the bid can be recovered.");
+        }
+        qty = BigInt(quantity);
+        if (!/^0x[0-9a-fA-F]{64}$/.test(storedSalt ?? "")) storedSalt = await deriveSalt(account, selected.id);
+        const steps = Array.from({ length: selected.stepCount }, (_, index) => index);
+        const match = steps.find((candidate) => hashBid(selected.id, account, candidate, qty, storedSalt) === commitment);
+        if (match === undefined) {
+          throw new Error("Could not recover the bid. Check the token amount, and use the wallet that sealed it.");
+        }
+        step = match;
+        writeStoredBid(selected.id, account, { step, quantity: qty.toString(), salt: storedSalt, derived: true });
+      }
       const hash = await writeContract(account, {
         address: auctionAddress,
         abi: auctionAbi,
@@ -466,7 +487,7 @@ export function AuctionProvider({ children }: { children: ReactNode }) {
           stepCount: 6,
           deposit,
           maxNotional: deposit,
-          maxSlots: 8,
+          maxSlots: 64,
           commitDeadline: BigInt(input.closeAt),
           revealDeadline: BigInt(revealAt),
           cancelAfter: BigInt(cancelAt),
