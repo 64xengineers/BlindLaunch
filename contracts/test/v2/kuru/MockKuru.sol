@@ -119,18 +119,50 @@ contract MockOrderBook {
     }
 }
 
+/// @dev Market creation is open by default, as on Monad testnet. `setOwnerOnly(true)` switches to
+///      Monad mainnet's rule: only `owner` may call `deployProxy`, anyone else gets Solady's
+///      `Unauthorized()` (0x82b42900). `verifiedMarket` has the real Router's 11-field shape and
+///      is all zero for any address this router did not create.
 contract MockKuruRouter {
+    error Unauthorized();
+
+    struct MarketParams {
+        uint32 pricePrecision;
+        uint96 sizePrecision;
+        address baseAssetAddress;
+        uint256 baseAssetDecimals;
+        address quoteAssetAddress;
+        uint256 quoteAssetDecimals;
+        uint32 tickSize;
+        uint96 minSize;
+        uint96 maxSize;
+        uint256 takerFeeBps;
+        uint256 makerFeeBps;
+    }
+
     MockMarginAccount public immutable margin;
+    address public owner;
+    bool public ownerOnly;
     uint256 public deployCount;
     MockOrderBook public lastMarket;
     bool public failDeploy;
+    mapping(address => MarketParams) public verifiedMarket;
 
     constructor(MockMarginAccount margin_) {
         margin = margin_;
+        owner = msg.sender;
     }
 
     function setFailDeploy(bool value) external {
         failDeploy = value;
+    }
+
+    function setOwnerOnly(bool value) external {
+        ownerOnly = value;
+    }
+
+    function setOwner(address value) external {
+        owner = value;
     }
 
     function deployProxy(
@@ -142,26 +174,44 @@ contract MockKuruRouter {
         uint32 tickSize,
         uint96 minSize,
         uint96 maxSize,
-        uint256,
-        uint256,
+        uint256 takerFeeBps,
+        uint256 makerFeeBps,
         uint96
     ) external returns (address) {
+        if (ownerOnly && msg.sender != owner) revert Unauthorized();
         require(!failDeploy, "deploy disabled");
         deployCount += 1;
-        lastMarket = new MockOrderBook(
-            margin,
-            MockOrderBook.Config({
-                base: base,
-                quote: quote,
-                baseDecimals: IERC20(base).decimals(),
-                quoteDecimals: IERC20(quote).decimals(),
-                sizePrecision: sizePrecision,
-                pricePrecision: pricePrecision,
-                tickSize: tickSize,
-                minSize: minSize,
-                maxSize: maxSize
-            })
-        );
+        MockOrderBook.Config memory config = MockOrderBook.Config({
+            base: base,
+            quote: quote,
+            baseDecimals: IERC20(base).decimals(),
+            quoteDecimals: IERC20(quote).decimals(),
+            sizePrecision: sizePrecision,
+            pricePrecision: pricePrecision,
+            tickSize: tickSize,
+            minSize: minSize,
+            maxSize: maxSize
+        });
+        lastMarket = new MockOrderBook(margin, config);
+        _verify(address(lastMarket), config, takerFeeBps, makerFeeBps);
         return address(lastMarket);
+    }
+
+    function _verify(address market, MockOrderBook.Config memory c, uint256 takerFeeBps, uint256 makerFeeBps)
+        internal
+    {
+        verifiedMarket[market] = MarketParams({
+            pricePrecision: c.pricePrecision,
+            sizePrecision: c.sizePrecision,
+            baseAssetAddress: c.base,
+            baseAssetDecimals: c.baseDecimals,
+            quoteAssetAddress: c.quote,
+            quoteAssetDecimals: c.quoteDecimals,
+            tickSize: c.tickSize,
+            minSize: c.minSize,
+            maxSize: c.maxSize,
+            takerFeeBps: takerFeeBps,
+            makerFeeBps: makerFeeBps
+        });
     }
 }

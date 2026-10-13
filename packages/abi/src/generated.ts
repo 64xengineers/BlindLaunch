@@ -2422,6 +2422,24 @@ export const marketSeederAbi = [
   },
   {
     "type": "function",
+    "name": "seedInto",
+    "inputs": [
+      {
+        "name": "auctionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "market",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "unwind",
     "inputs": [
       {
@@ -2616,6 +2634,16 @@ export const marketSeederAbi = [
   {
     "type": "error",
     "name": "Locked",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarketMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAKuruMarket",
     "inputs": []
   },
   {

@@ -96,11 +96,24 @@ contract SeedVault {
 /// @notice Opens a Kuru order-book market at an auction's clearing price.
 ///
 /// `BlindAuctionV2.handOffSeed` approves the reserved amounts and calls `accept`, which pulls them.
-/// `seed` (anyone, retryable) then creates the Kuru market once per (pair, params),
-/// moves the funds into a fresh `SeedVault`, and posts an ask at the clearing price and a bid one
-/// tick below. After `lockUntil`, `unwind` (anyone) cancels what is left and pays everything,
-/// including fill proceeds, to the auction's authority. A position that was never seeded is
-/// returned the same way, so seed funds cannot get stuck.
+/// The position is then seeded (anyone, retryable) by one of two paths, which differ only in
+/// where the market comes from:
+///
+/// - `seed` creates the Kuru market itself, once per (pair, params), through the Router's
+///   `deployProxy`. That works where market creation is open (Monad testnet, local mocks).
+///   Where it is not, it reverts `DeployFailed` and nothing moves.
+/// - `seedInto` uses a market that already exists. On Monad mainnet only the Kuru Router's owner
+///   may create markets (anyone else gets `Unauthorized()`), while trading in a market is open
+///   to all, so the market is created by Kuru and handed in here. The Router's
+///   `verifiedMarket(market)` must show a genuine Kuru market for exactly this sale token and
+///   quote token with every setting the auction declared (price and size precision, tick size,
+///   min and max size, taker and maker fee); anything else reverts `NotAKuruMarket` or
+///   `MarketMismatch`. The Router does not report the AMM spread, so that one is not checked.
+///
+/// Both paths then move the funds into a fresh `SeedVault` and post an ask at the clearing price
+/// and a bid one tick below. After `lockUntil`, `unwind` (anyone) cancels what is left and pays
+/// everything, including fill proceeds, to the auction's authority. A position that was never
+/// seeded is returned the same way, so seed funds cannot get stuck.
 contract MarketSeeder is IMarketSeeder {
     struct KuruParams {
         uint96 sizePrecision;
@@ -138,6 +151,22 @@ contract MarketSeeder is IMarketSeeder {
         uint96 bidSize;
     }
 
+    /// @dev The Router's `verifiedMarket(market)` record, one word per field; all zero for an
+    ///      address the Router did not create.
+    struct VerifiedMarket {
+        uint256 pricePrecision;
+        uint256 sizePrecision;
+        address baseAsset;
+        uint256 baseDecimals;
+        address quoteAsset;
+        uint256 quoteDecimals;
+        uint256 tickSize;
+        uint256 minSize;
+        uint256 maxSize;
+        uint256 takerFeeBps;
+        uint256 makerFeeBps;
+    }
+
     error NotAuction();
     error AlreadyAccepted();
     error NotAccepted();
@@ -149,6 +178,8 @@ contract MarketSeeder is IMarketSeeder {
     error PriceTooLow();
     error PriceTooHigh();
     error DeployFailed();
+    error NotAKuruMarket();
+    error MarketMismatch();
     error TransferFailed();
     error Reentrancy();
 
@@ -172,7 +203,8 @@ contract MarketSeeder is IMarketSeeder {
 
     mapping(uint256 => Position) internal _positions;
     mapping(uint256 => bytes) internal _params;
-    /// @notice Markets this seeder created, keyed by keccak256(abi.encode(sale, quote, kuruParams)).
+    /// @notice The market used for each (pair, params), keyed by keccak256(abi.encode(sale, quote, kuruParams)):
+    ///         created by `seed`, or the first one handed to `seedInto`.
     mapping(bytes32 => address) public marketOf;
     uint256 private _locked = 1;
 
@@ -224,32 +256,25 @@ contract MarketSeeder is IMarketSeeder {
         emit SeedAccepted(order.auctionId, order.saleAmount, order.quoteAmount);
     }
 
+    /// @notice Seeds into the market for this (pair, params), creating it through the Kuru Router
+    ///         the first time. Reverts `DeployFailed` where the Router does not let this contract
+    ///         create markets (Monad mainnet); use `seedInto` there.
     function seed(uint256 auctionId) external nonReentrant {
-        Position storage pos = _positions[auctionId];
-        if (!pos.accepted) revert NotAccepted();
-        if (pos.seeded || pos.unwound) revert AlreadySeeded();
-
+        Position storage pos = _seedable(auctionId);
         KuruParams memory k = _decode(_params[auctionId]);
-        address market = _marketFor(auctionId, pos, k);
-        Orders memory orders = _orders(pos, k);
-        SeedVault vault = new SeedVault(margin);
-        _push(pos.saleToken, address(vault), pos.saleAmount);
-        _push(pos.quoteToken, address(vault), pos.quoteAmount);
-        (pos.askId, pos.bidId) = vault.post(
-            IKuruOrderBook(market),
-            pos.saleToken,
-            pos.quoteToken,
-            orders.askPrice,
-            orders.askSize,
-            orders.bidPrice,
-            orders.bidSize
-        );
-        pos.seeded = true;
-        pos.market = market;
-        pos.vault = address(vault);
-        emit MarketSeeded(
-            auctionId, market, address(vault), orders.askPrice, orders.askSize, orders.bidPrice, orders.bidSize
-        );
+        _seed(auctionId, pos, k, _marketFor(auctionId, pos, k));
+    }
+
+    /// @notice Seeds into an existing Kuru market, such as one Kuru created on Monad mainnet. The
+    ///         Router must vouch for `market` as a genuine market for this sale token and quote
+    ///         token with every setting the auction declared.
+    function seedInto(uint256 auctionId, address market) external nonReentrant {
+        Position storage pos = _seedable(auctionId);
+        KuruParams memory k = _decode(_params[auctionId]);
+        _checkMarket(pos, k, market);
+        bytes32 key = _marketKey(auctionId, pos);
+        if (marketOf[key] == address(0)) marketOf[key] = market;
+        _seed(auctionId, pos, k, market);
     }
 
     // ------------------------------------------------------------------ unwind
@@ -282,6 +307,56 @@ contract MarketSeeder is IMarketSeeder {
     }
 
     // ------------------------------------------------------------------ internals
+
+    function _seedable(uint256 auctionId) private view returns (Position storage pos) {
+        pos = _positions[auctionId];
+        if (!pos.accepted) revert NotAccepted();
+        if (pos.seeded || pos.unwound) revert AlreadySeeded();
+    }
+
+    /// @dev The shared body of `seed` and `seedInto`: a fresh vault takes the funds and posts an
+    ///      ask at the clearing price and a bid one tick below in `market`.
+    function _seed(uint256 auctionId, Position storage pos, KuruParams memory k, address market) private {
+        Orders memory orders = _orders(pos, k);
+        SeedVault vault = new SeedVault(margin);
+        _push(pos.saleToken, address(vault), pos.saleAmount);
+        _push(pos.quoteToken, address(vault), pos.quoteAmount);
+        (pos.askId, pos.bidId) = vault.post(
+            IKuruOrderBook(market),
+            pos.saleToken,
+            pos.quoteToken,
+            orders.askPrice,
+            orders.askSize,
+            orders.bidPrice,
+            orders.bidSize
+        );
+        pos.seeded = true;
+        pos.market = market;
+        pos.vault = address(vault);
+        emit MarketSeeded(
+            auctionId, market, address(vault), orders.askPrice, orders.askSize, orders.bidPrice, orders.bidSize
+        );
+    }
+
+    /// @dev Reverts unless the Router records `market` as a Kuru market for this position's pair
+    ///      with exactly the declared settings.
+    function _checkMarket(Position storage pos, KuruParams memory k, address market) private view {
+        (bool ok, bytes memory returned) =
+            address(router).staticcall(abi.encodeCall(IKuruRouter.verifiedMarket, (market)));
+        if (!ok || returned.length < 11 * 32) revert NotAKuruMarket();
+        VerifiedMarket memory v = abi.decode(returned, (VerifiedMarket));
+        if (v.baseAsset == address(0)) revert NotAKuruMarket();
+        if (v.baseAsset != pos.saleToken || v.quoteAsset != pos.quoteToken) revert MarketMismatch();
+        if (
+            v.pricePrecision != k.pricePrecision || v.sizePrecision != k.sizePrecision || v.tickSize != k.tickSize
+                || v.minSize != k.minSize || v.maxSize != k.maxSize || v.takerFeeBps != k.takerFeeBps
+                || v.makerFeeBps != k.makerFeeBps
+        ) revert MarketMismatch();
+    }
+
+    function _marketKey(uint256 auctionId, Position storage pos) private view returns (bytes32) {
+        return keccak256(abi.encode(pos.saleToken, pos.quoteToken, _params[auctionId]));
+    }
 
     function _decode(bytes memory data) private pure returns (KuruParams memory k) {
         k = abi.decode(data, (KuruParams));
@@ -334,7 +409,7 @@ contract MarketSeeder is IMarketSeeder {
     }
 
     function _marketFor(uint256 auctionId, Position storage pos, KuruParams memory k) private returns (address market) {
-        bytes32 key = keccak256(abi.encode(pos.saleToken, pos.quoteToken, _params[auctionId]));
+        bytes32 key = _marketKey(auctionId, pos);
         market = marketOf[key];
         if (market != address(0)) return market;
         // Encoded in two halves: every argument is static, so this equals abi.encode of all eleven.

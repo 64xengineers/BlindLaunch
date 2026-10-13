@@ -19,6 +19,26 @@ interface IKuruRouter {
         uint256 makerFeeBps,
         uint96 kuruAmmSpread
     ) external returns (address);
+
+    /// @dev The Router's record of a market it created; all zero for any other address. On Monad
+    ///      mainnet only the Router's owner can call `deployProxy`, so this is how a market made
+    ///      by Kuru is recognised.
+    function verifiedMarket(address market)
+        external
+        view
+        returns (
+            uint32 pricePrecision,
+            uint96 sizePrecision,
+            address baseAsset,
+            uint256 baseDecimals,
+            address quoteAsset,
+            uint256 quoteDecimals,
+            uint32 tickSize,
+            uint96 minSize,
+            uint96 maxSize,
+            uint256 takerFeeBps,
+            uint256 makerFeeBps
+        );
 }
 
 interface IKuruMarginAccount {

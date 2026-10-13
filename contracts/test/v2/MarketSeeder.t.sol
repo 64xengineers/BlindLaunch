@@ -29,6 +29,7 @@ contract MarketSeederTest is V2Base {
     MockMarginAccount internal kuruMargin;
     MockKuruRouter internal kuruRouter;
     MarketSeeder internal seeder;
+    address internal kuruOwner = makeAddr("kuru router owner");
 
     function setUp() public override {
         super.setUp();
@@ -39,6 +40,7 @@ contract MarketSeederTest is V2Base {
         sale.approve(address(auction), type(uint256).max);
         kuruMargin = new MockMarginAccount();
         kuruRouter = new MockKuruRouter(kuruMargin);
+        kuruRouter.setOwner(kuruOwner);
         seeder = new MarketSeeder(
             address(auction), IKuruRouter(address(kuruRouter)), IKuruMarginAccount(address(kuruMargin))
         );
@@ -109,6 +111,33 @@ contract MarketSeederTest is V2Base {
     function _open(uint256 id) internal {
         auction.handOffSeed(id);
         seeder.seed(id);
+    }
+
+    /// @dev Monad mainnet: only the Router's owner may create a market, so Kuru makes it.
+    function _ownerMarket(address base, address quoteToken, MarketSeeder.KuruParams memory k)
+        internal
+        returns (address market)
+    {
+        kuruRouter.setOwnerOnly(true);
+        vm.prank(kuruOwner);
+        market = kuruRouter.deployProxy(
+            0,
+            base,
+            quoteToken,
+            k.sizePrecision,
+            k.pricePrecision,
+            k.tickSize,
+            k.minSize,
+            k.maxSize,
+            k.takerFeeBps,
+            k.makerFeeBps,
+            k.kuruAmmSpread
+        );
+    }
+
+    function _handedOff() internal returns (uint256 id) {
+        id = _settled();
+        auction.handOffSeed(id);
     }
 
     // ------------------------------------------------------------------ validate (S1 to S4)
@@ -288,6 +317,160 @@ contract MarketSeederTest is V2Base {
         assertTrue(seeder.positionOf(id).seeded);
     }
 
+    // ------------------------------------------------------------------ seedInto (Monad mainnet: Kuru creates the market)
+
+    function test_seedIntoAnOwnerCreatedMarket() public {
+        address market = _ownerMarket(address(sale), address(quote), _kuru());
+        uint256 id = _handedOff();
+        vm.prank(makeAddr("keeper"));
+        seeder.seedInto(id, market);
+
+        MarketSeeder.Position memory pos = seeder.positionOf(id);
+        assertTrue(pos.seeded);
+        assertEq(pos.market, market);
+        assertEq(kuruRouter.deployCount(), 1, "only Kuru's own deploy");
+        bytes32 key = keccak256(abi.encode(address(sale), address(quote), abi.encode(_kuru())));
+        assertEq(seeder.marketOf(key), market, "recorded for the pair and params");
+
+        MockOrderBook book = MockOrderBook(market);
+        (address askOwner, uint96 askSize,,,, uint32 askPrice,, bool askIsBuy) = book.s_orders(pos.askId);
+        assertEq(askOwner, pos.vault);
+        assertEq(askPrice, 25_000, "ask at the clearing price, 2.5 tUSD");
+        assertEq(askSize, 100e8, "all 100 seeded tokens");
+        assertFalse(askIsBuy);
+        (address bidOwner, uint96 bidSize,,,, uint32 bidPrice,, bool bidIsBuy) = book.s_orders(pos.bidId);
+        assertEq(bidOwner, pos.vault);
+        assertEq(bidPrice, 24_990, "bid one tick below");
+        assertEq(bidSize, 10_000_000_000);
+        assertTrue(bidIsBuy);
+
+        // The vault holds the whole seed in Kuru: 100 tokens on the ask, 250 tUSD on the bid and as change.
+        assertEq(book.baseAmount(askSize), 100 * TOKEN);
+        assertEq(book.quoteAmount(bidSize, bidPrice) + kuruMargin.getBalance(pos.vault, address(quote)), 250 * USD);
+        assertEq(sale.balanceOf(address(seeder)), 0);
+        assertEq(quote.balanceOf(address(seeder)), 0);
+    }
+
+    function test_onMainnetSeedRevertsAndSeedIntoWorks() public {
+        kuruRouter.setOwnerOnly(true);
+        uint256 id = _handedOff();
+        vm.expectRevert(MarketSeeder.DeployFailed.selector);
+        seeder.seed(id);
+        assertFalse(seeder.positionOf(id).seeded);
+        assertEq(quote.balanceOf(address(seeder)), 250 * USD, "funds wait in the seeder");
+
+        address market = _ownerMarket(address(sale), address(quote), _kuru());
+        seeder.seedInto(id, market);
+        assertTrue(seeder.positionOf(id).seeded);
+        assertEq(seeder.positionOf(id).market, market);
+    }
+
+    function test_seedReusesAMarketHandedToSeedInto() public {
+        address market = _ownerMarket(address(sale), address(quote), _kuru());
+        seeder.seedInto(_handedOff(), market);
+        uint256 second = _create(_seededParams());
+        _bid(second, cara, 1, 400);
+        _closeAndOpenAll(second);
+        auction.settle(second);
+        _open(second);
+        assertEq(seeder.positionOf(second).market, market, "no deploy needed for the same pair and params");
+        assertEq(kuruRouter.deployCount(), 1);
+    }
+
+    function test_seedIntoRejectsAnAddressKuruDidNotCreate() public {
+        uint256 id = _handedOff();
+        vm.expectRevert(MarketSeeder.NotAKuruMarket.selector);
+        seeder.seedInto(id, makeAddr("not a market"));
+
+        // A look-alike book with the right settings that the Router never made.
+        MockOrderBook fake = new MockOrderBook(
+            kuruMargin,
+            MockOrderBook.Config({
+                base: address(sale),
+                quote: address(quote),
+                baseDecimals: 18,
+                quoteDecimals: 6,
+                sizePrecision: 1e8,
+                pricePrecision: 1e4,
+                tickSize: 10,
+                minSize: 1e6,
+                maxSize: 1e16
+            })
+        );
+        vm.expectRevert(MarketSeeder.NotAKuruMarket.selector);
+        seeder.seedInto(id, address(fake));
+        assertFalse(seeder.positionOf(id).seeded);
+    }
+
+    function test_seedIntoRejectsAMarketForAnotherPair() public {
+        uint256 id = _handedOff();
+        address[3] memory wrong = [
+            _ownerMarket(address(new TestToken("Other", "OTHER", 18)), address(quote), _kuru()),
+            _ownerMarket(address(sale), address(new TestToken("Other USD", "oUSD", 6)), _kuru()),
+            _ownerMarket(address(quote), address(sale), _kuru())
+        ];
+        for (uint256 i = 0; i < wrong.length; ++i) {
+            vm.expectRevert(MarketSeeder.MarketMismatch.selector);
+            seeder.seedInto(id, wrong[i]);
+        }
+        assertFalse(seeder.positionOf(id).seeded);
+    }
+
+    function test_seedIntoRejectsAMarketWithOtherSettings() public {
+        uint256 id = _handedOff();
+        for (uint256 i = 0; i < 7; ++i) {
+            MarketSeeder.KuruParams memory k = _kuru();
+            if (i == 0) k.pricePrecision = 1e5;
+            else if (i == 1) k.sizePrecision = 1e9;
+            else if (i == 2) k.tickSize = 20;
+            else if (i == 3) k.minSize = 2e6;
+            else if (i == 4) k.maxSize = 1e15;
+            else if (i == 5) k.takerFeeBps = 30;
+            else k.makerFeeBps = 10;
+            address market = _ownerMarket(address(sale), address(quote), k);
+            vm.expectRevert(MarketSeeder.MarketMismatch.selector);
+            seeder.seedInto(id, market);
+        }
+        assertFalse(seeder.positionOf(id).seeded);
+
+        // The Router does not report the AMM spread, so that is the one setting that may differ.
+        MarketSeeder.KuruParams memory spread = _kuru();
+        spread.kuruAmmSpread = 200;
+        seeder.seedInto(id, _ownerMarket(address(sale), address(quote), spread));
+        assertTrue(seeder.positionOf(id).seeded);
+    }
+
+    function test_seedIntoOnlyOnce() public {
+        address market = _ownerMarket(address(sale), address(quote), _kuru());
+        uint256 id = _handedOff();
+        seeder.seedInto(id, market);
+        vm.expectRevert(MarketSeeder.AlreadySeeded.selector);
+        seeder.seedInto(id, market);
+        vm.expectRevert(MarketSeeder.AlreadySeeded.selector);
+        seeder.seed(id);
+    }
+
+    function test_unwindAfterSeedIntoPaysTheAuthority() public {
+        address market = _ownerMarket(address(sale), address(quote), _kuru());
+        uint256 id = _handedOff();
+        seeder.seedInto(id, market);
+        MarketSeeder.Position memory pos = seeder.positionOf(id);
+
+        // A taker buys 40 of the 100 seeded tokens at 2.5: the vault earns 100 tUSD.
+        quote.mint(address(kuruMargin), 100 * USD);
+        MockOrderBook(market).fill(pos.askId, 40e8);
+
+        uint256 saleBefore = sale.balanceOf(authority);
+        uint256 quoteBefore = quote.balanceOf(authority);
+        vm.warp(pos.lockUntil);
+        vm.prank(makeAddr("anyone"));
+        seeder.unwind(id);
+        assertEq(sale.balanceOf(authority) - saleBefore, 60 * TOKEN, "unsold seed tokens back");
+        assertEq(quote.balanceOf(authority) - quoteBefore, 350 * USD, "seeded quote plus fill proceeds");
+        assertEq(kuruMargin.getBalance(pos.vault, address(sale)), 0);
+        assertEq(kuruMargin.getBalance(pos.vault, address(quote)), 0);
+    }
+
     // ------------------------------------------------------------------ unwind (S12, S13, S15)
 
     function test_unwindWaitsForTheLock() public {
@@ -335,6 +518,8 @@ contract MarketSeederTest is V2Base {
         assertEq(quote.balanceOf(address(seeder)), 0);
         vm.expectRevert(MarketSeeder.AlreadySeeded.selector);
         seeder.seed(id);
+        vm.expectRevert(MarketSeeder.AlreadySeeded.selector);
+        seeder.seedInto(id, address(0));
     }
 
     function test_unwindOfAnUnknownAuctionReverts() public {
@@ -342,6 +527,8 @@ contract MarketSeederTest is V2Base {
         seeder.unwind(42);
         vm.expectRevert(MarketSeeder.NotAccepted.selector);
         seeder.seed(42);
+        vm.expectRevert(MarketSeeder.NotAccepted.selector);
+        seeder.seedInto(42, address(0));
     }
 
     // ------------------------------------------------------------------ solvency end to end

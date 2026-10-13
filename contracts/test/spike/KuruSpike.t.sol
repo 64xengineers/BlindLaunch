@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test, console2} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 interface IKuruRouter {
     function deployProxy(
@@ -127,17 +128,45 @@ contract SpikeTrader {
     }
 }
 
+
+/// @notice Kuru's Router and MarginAccount on the forked network (docs.kuru.io/contracts/Contract-addresses).
+///         The fork tests run against testnet or mainnet, whichever `KURU_FORK_RPC` (or the older
+///         `MONAD_TESTNET_RPC`) points at; they are skipped when neither is set.
+library KuruFork {
+    function rpc(Vm vm) internal view returns (string memory) {
+        return vm.envOr("KURU_FORK_RPC", vm.envOr("MONAD_TESTNET_RPC", string("")));
+    }
+
+    function addresses() internal view returns (address router, address margin) {
+        if (block.chainid == 10143) return (0x7EFbE105Ca7415dE98F96622173458ac1c054630, 0xd029C2D98ff85D8F64799017fE00a59B1159CE02);
+        if (block.chainid == 143) return (0xd651346d7c789536ebf06dc72aE3C8502cd695CC, 0x2A68ba1833cDf93fa9Da1EEbd7F46242aD8E90c5);
+        revert("KuruFork: no Kuru addresses for this chain");
+    }
+}
+
 contract KuruSpikeTest is Test {
-    IKuruRouter internal constant ROUTER = IKuruRouter(0x7EFbE105Ca7415dE98F96622173458ac1c054630);
-    IKuruMarginAccount internal constant MARGIN = IKuruMarginAccount(0xd029C2D98ff85D8F64799017fE00a59B1159CE02);
+    IKuruRouter internal kuruRouter;
+    IKuruMarginAccount internal kuruMargin;
 
     function setUp() public {
-        string memory rpc = vm.envOr("MONAD_TESTNET_RPC", string(""));
+        string memory rpc = KuruFork.rpc(vm);
         if (bytes(rpc).length == 0) {
             vm.skip(true);
             return;
         }
         vm.createSelectFork(rpc);
+        (address router, address margin) = KuruFork.addresses();
+        kuruRouter = IKuruRouter(router);
+        kuruMargin = IKuruMarginAccount(margin);
+    }
+
+    /// Testnet lets any contract create a market; on mainnet only the Router's owner may, so the
+    /// fork test creates it as the owner there (trading in it is open to everyone either way).
+    function _newMarket(SpikeTrader trader, address base, address quote) internal returns (address) {
+        if (block.chainid != 143) return trader.deploy(kuruRouter, base, quote);
+        (, bytes memory owner) = address(kuruRouter).staticcall(abi.encodeWithSignature("owner()"));
+        vm.prank(abi.decode(owner, (address)));
+        return kuruRouter.deployProxy(0, base, quote, 1e8, 1e4, 1, 1e6, 1e16, 0, 0, 100);
     }
 
     /// Price 2.5 quote per base: 25_000 at pricePrecision 1e4.
@@ -146,10 +175,10 @@ contract KuruSpikeTest is Test {
     function test_contractCanDeployDepositPostAndFill() public {
         SpikeToken base = new SpikeToken("Spike Base", "SBASE", 18);
         SpikeToken quote = new SpikeToken("Spike Quote", "SQUOTE", 6);
-        SpikeTrader seller = new SpikeTrader(MARGIN);
-        SpikeTrader buyer = new SpikeTrader(MARGIN);
+        SpikeTrader seller = new SpikeTrader(kuruMargin);
+        SpikeTrader buyer = new SpikeTrader(kuruMargin);
 
-        address market = seller.deploy(ROUTER, address(base), address(quote));
+        address market = _newMarket(seller, address(base), address(quote));
         console2.log("market", market);
         assertTrue(market != address(0), "deployProxy from a contract");
 
@@ -172,8 +201,8 @@ contract KuruSpikeTest is Test {
     function test_contractCanCancelItsOwnRestingOrder() public {
         SpikeToken base = new SpikeToken("Spike Base", "SBASE", 18);
         SpikeToken quote = new SpikeToken("Spike Quote", "SQUOTE", 6);
-        SpikeTrader seller = new SpikeTrader(MARGIN);
-        IKuruOrderBook book = IKuruOrderBook(seller.deploy(ROUTER, address(base), address(quote)));
+        SpikeTrader seller = new SpikeTrader(kuruMargin);
+        IKuruOrderBook book = IKuruOrderBook(_newMarket(seller, address(base), address(quote)));
 
         base.mint(address(seller), 10e18);
         seller.deposit(base, 10e18);
