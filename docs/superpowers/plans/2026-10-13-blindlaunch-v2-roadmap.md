@@ -16,7 +16,7 @@
 | 1 | `@blindlaunch/sealed-bid`, v2 contracts, full test suite | Done on branch `v2/phase-0-1`. |
 | 1b | Fixes for the independent audit (H1, H2, H3, M1, M2, M3, L1, L2, I2, I4) | Done on branch `v2/phase-0-1`. 133 Foundry tests, 37 Vitest tests. |
 | 2 | Market seeder, deploy scripts, keeper service, testnet deployment | Done on branch `v2/phase-0-1` except Task 2.4 (live testnet deploy), which needs the owner's funded keys and go-ahead. |
-| 3 | Web app rebuild | After phase 2 testnet deployment |
+| 3 | Web app rebuild | Built and tested against a local chain on branch `v2/phase-0-1`. Remaining: the passkey device matrix and manual QA on testnet (Task 3.10), both after Task 2.4. |
 | 4 | Mainnet, docs, demo | After phase 3 |
 
 Dependency order: 2.1 → 2.2 → 2.4; 2.3 can run in parallel with 2.1; 3.x needs 2.4 (testnet addresses) and the Mera matrix; 4.x needs 3.x.
@@ -215,6 +215,20 @@ Exit: addresses in `deployments/testnet.json`; run log (tx hashes) appended to `
 
 ---
 
+## Phase 3 execution log
+
+| Where | What happened | Resolution |
+| --- | --- | --- |
+| 3.1 | Market and create rules would otherwise only fail on chain. | `chain/kuru.ts` mirrors `MarketSeeder.validate`, `chain/create.ts` mirrors every `createAuction` revert; both unit-tested against the Foundry numbers (C3, C4, P1, P10). |
+| 3.3 | Bid records were planned for every user. | No secret is needed after `commit`, so nothing is stored for wallet users. Passkey users get an optional AES-GCM note under the passkey's second PRF namespace. `placeBid` runs `verifySealed` before asking for a signature (B6). |
+| 3.3 | Opening calldata was built separately in the keeper and the app. | `openBatches` and `verifySealed` moved into `@blindlaunch/sealed-bid`; the keeper uses them too. |
+| 3.4 | Phases came from the device clock; a time-travelled chain showed an open auction as not yet open. | `useNow` follows the latest block's timestamp. |
+| 3.9 | Headless Chrome render on anvil showed the Kuru market not opening after a hand-off sent by a wallet. | Root cause: `try seed` inside `handOffSeed` plus gas estimation. Fixed in the contract (separate `seed` call), regression test `test_handOffNeverOpensTheMarketItself`; the app's `openMarket` sends both calls. |
+| 3.9 | A pre-existing anvil fork of Monad mainnet (another project) was listening on port 8545. | Not touched. Local runs use another port via `VITE_RPC_URL` / `RPC_URL`; `LocalStack` and `local-demo.ts` refuse any chain other than 31337. |
+| 3.5 | Create form showed errors before anything was typed, and inputs stretched next to hints. | Errors appear once a field is touched or a launch is attempted; fields top-aligned. |
+
+Tests added in phase 3: web 26 (chain 17, state 3, auth and notes 5, anvil end to end 1 covering create token, plan, approve, create, three sealed bids, a rejected second bid, open, settle, market, claims, reclaim, unwind and zero residual balances); `sealed-bid` +4 (`verifySealed`, `openBatches`); `MarketSeeder.t.sol` +1. Visual check: every route rendered in headless Chrome against a seeded local chain (`apps/web/scripts/local-demo.ts`), screenshots at 1366 and 500 px.
+
 ## Phase 3: Web application
 
 Prerequisite: Mera matrix in `spikes.md` run on at least desktop Chrome and iPhone Safari.
@@ -301,13 +315,14 @@ Exit: `pnpm typecheck && pnpm test && pnpm build` green; e2e green; QA checklist
 | Parity | `test/v2/Vectors.t.sol` | 1 (6 vectors) | TS-sealed bids open on chain for every pair; out-of-ladder and zero-quantity refunded; corrupted case forfeits |
 | Differential and solvency | `test/v2/Fuzz.t.sol` | 1 × 256 runs | v2 vs v1 clearing (same step, price and total; within one lot per bid), random forfeits, zero residual balance, all pairs |
 | Gas | `test/v2/Gas.t.sol` | 2 | 200 bids: open bound 54,000 per bid, settle bound 129,000; settle cost equal for 2 and 200 bids |
-| Market seeder | `test/v2/MarketSeeder.t.sol` | 18 | validate (on tick, off tick, floor below two ticks, above uint32, bad params, at create), accept guards, prices and sizes for 18/6 decimals, market reuse, one vault per auction, skipped side, seed once, Kuru failure then retry, lock, unwind after a partial fill, never-seeded unwind, solvency end to end |
+| Market seeder | `test/v2/MarketSeeder.t.sol` | 19 | validate (on tick, off tick, floor below two ticks, above uint32, bad params, at create), accept guards, prices and sizes for 18/6 decimals, market reuse, one vault per auction, skipped side, seed once, Kuru failure then retry, lock, unwind after a partial fill, never-seeded unwind, solvency end to end |
 | Deploy | `test/v2/DeployV2.t.sol` | 4 | Wiring, existing quote token, quote choice guard, chain without Kuru |
 | Seeder on real Kuru | `test/spike/MarketSeederFork.t.sol` | 1 (fork) | Auction to market at the clearing price, third-party buy, exact unwind |
 | ABI package | `packages/abi/tests` | 3 | Deployment file parsing |
 | Keeper | `apps/keeper/tests` | 17 | Key store, decision rules, anvil end to end (refill, chain-time gating, publish/open/settle/hand-off, TS parity, idempotency, cancel and refund) |
+| Web | `apps/web/tests` | 26 | Formatting, phases and public buttons (P3), bid checks (P4), Kuru (C3, C4), Create planner (P1, P10), network config, error sentences (X3), paging (C1), wallet discovery (A1), passkey derivation (A4), bid notes (B2, B3), anvil end to end through the UI's actions |
 | Kuru spike | `test/spike/KuruSpike.t.sol` | 2 (fork) | Contract-driven market creation and fill; order id recovery and cancel |
-| sealed-bid | `packages/sealed-bid/tests` | 37 | Curve, encoding, domain binding, Shamir, seal/open, key validation, clearing mirror with 2,000-book differential, vectors freshness |
+| sealed-bid | `packages/sealed-bid/tests` | 41 | Curve, encoding, domain binding, Shamir, seal/open, key validation, clearing mirror with 2,000-book differential, vectors freshness |
 | Phase 2 | this file | S1 to S14, D1 to D3, K1 to K11, T1 to T3 | Seeder, deploy, keepers, live testnet |
 | Phase 3 | this file | C1 to C4, A1 to A4, B1 to B6, X1 to X4, P1 to P10, e2e | Web |
 | Phase 4 | this file | M1 to M5 | Mainnet and docs |

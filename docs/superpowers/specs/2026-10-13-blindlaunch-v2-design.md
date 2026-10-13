@@ -249,7 +249,7 @@ openMany(auctionId, uint32[] slots, Point[] Sa, Point[] Sb)   // skips slots alr
 settle(auctionId)                                  // storage only; reserves the seed
 cancel(auctionId)                                  // now ≥ cancelAfter and publishedCount < 2
 burnForfeits(auctionId)                            // anyone, once, after settle
-handOffSeed(auctionId)                             // anyone; approve exact, seeder.accept pulls, try seed
+handOffSeed(auctionId)                             // anyone; approve exact, seeder.accept pulls; no seed call
 releaseSeed(auctionId)                             // anyone, after seedLockUntil, if never handed off
 claim(auctionId)                                   // both legs still unclaimed, to msg.sender
 claimRefund(auctionId, to) / claimTokens(auctionId, to)
@@ -323,7 +323,7 @@ bidPrice  = askPrice − tickSize
 kuruSize(baseUnits) = baseUnits · sizePrecision / 10^saleDecimals
 ```
 
-Hand-off from the auction (phase 1, independent of Kuru): `settle` only reserves the seed. If seeding is configured and `totalSold > 0`, it stores `seedSale = min(seedSaleLots, unsoldLots)·lotSize` and `seedQuote = proceeds·seedQuoteBps/10000` and sets `seedState = Reserved`. Anyone then calls `handOffSeed`: the auction approves exactly those amounts, `seeder.accept(order)` pulls them, the auction checks both balance deltas and that both allowances are back to 0, sets `HandedOff`, and calls `try seeder.seed(auctionId)`. If anything before `seed` fails, the whole call reverts and can be retried. If the seed is never handed off, anyone can call `releaseSeed` after `seedLockUntil`, which returns the reserved amounts to the authority. `reclaim` always excludes the reserved amounts, so they are paid exactly once.
+Hand-off from the auction (phase 1, independent of Kuru): `settle` only reserves the seed. If seeding is configured and `totalSold > 0`, it stores `seedSale = min(seedSaleLots, unsoldLots)·lotSize` and `seedQuote = proceeds·seedQuoteBps/10000` and sets `seedState = Reserved`. Anyone then calls `handOffSeed`: the auction approves exactly those amounts, `seeder.accept(order)` pulls them, the auction checks both balance deltas and that both allowances are back to 0, and sets `HandedOff`. If anything fails, the whole call reverts and can be retried. Opening the market is a separate call to `MarketSeeder.seed` (anyone): a `try seed` inside the hand-off let a wallet's gas estimate pick a limit at which `seed` ran out of gas and was silently skipped. If the seed is never handed off, anyone can call `releaseSeed` after `seedLockUntil`, which returns the reserved amounts to the authority. `reclaim` always excludes the reserved amounts, so they are paid exactly once.
 
 Primary path inside the seeder (verified by the phase-0 spike and by `test/spike/MarketSeederFork.t.sol` on real Kuru). Each auction's position lives in its own `SeedVault`, because Kuru margin balances are per address. `seed` (anyone, retryable):
 
@@ -332,7 +332,7 @@ Primary path inside the seeder (verified by the phase-0 spike and by `test/spike
 3. `addSellOrder(askPrice, kuruSize(seedSale), true)`; `addBuyOrder(bidPrice, floor(seedQuote / askPrice in Kuru units), true)`.
 4. Record `lockUntil`. Emit `MarketSeeded(auctionId, market, askPrice, bidPrice)`.
 
-A Kuru revert never reverts `settle`, which makes no external calls, and never reverts `handOffSeed` after `accept`. After `lockUntil`, the authority calls `unwind(auctionId, orderIds)`: cancels the orders it owns, withdraws both balances from `MarginAccount`, and transfers everything (including any `pending`) to the authority.
+A Kuru revert never reverts `settle` (no external calls) or `handOffSeed` (which no longer calls `seed`); it only reverts the `seed` call, which anyone can retry. After `lockUntil`, the authority calls `unwind(auctionId, orderIds)`: cancels the orders it owns, withdraws both balances from `MarginAccount`, and transfers everything (including any `pending`) to the authority.
 
 Fallback path (not needed: the phase 0 spike showed a contract can call `deployProxy`, deposit, post and cancel orders; kept for reference): `seed` is replaced by `release(auctionId)`, which transfers the seed funds to the configured keeper address and records the amounts. `release` requires that the keeper has already granted the seeder an allowance of `type(uint256).max` on both tokens; the keeper service grants it at startup. The keeper performs the Kuru calls with the SDK, then calls `confirm(auctionId, market)`, which checks `Router.verifiedMarket(market)` is set with matching base and quote and records the market. If `confirm` has not happened by `lockUntil`, the authority calls `recover(auctionId)`, which pulls the released amounts back from the keeper through that allowance and sends them to the authority. This path is documented in the README as non-atomic.
 
@@ -451,3 +451,4 @@ Add: `docs/superpowers/specs/` (this file), `docs/superpowers/plans/`, `.github/
 | 2026-10-13 | Claims and reclaims split per token | Audit M1: a paused sale token held back the quote refund |
 | 2026-10-13 | Commitment binds chain id and contract; registry rejects duplicate keys and zero owners, adds `skip`; keeper publish timing rule; trust statement corrected | Audit M2, M3, L1, L2, I2 |
 | 2026-10-13 | Per-auction `SeedVault`; bid size rounded to Kuru's exact unit; `unwind` permissionless and covers never-seeded positions | Phase 2: Kuru margin is per address; fork test found Kuru's ceil-debit, floor-refund rounding |
+| 2026-10-13 | `handOffSeed` no longer calls `seed`; the web app and keepers call `MarketSeeder.seed` next | Phase 3: rendering the app on anvil showed a wallet gas estimate making `try seed` run out of gas silently |
