@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 /// @notice What BlindAuctionV2 needs from a market seeder.
 ///         `validate` runs at auction creation and must revert on unusable parameters.
 ///         `accept` pulls exactly the approved amounts with transferFrom and records them.
-///         `seed` creates the market and posts the orders; it may be retried by anyone.
+///         `seed` creates the market and posts the orders; anyone calls it after the hand-off, and may retry it.
 interface IMarketSeeder {
     struct SeedConfig {
         address saleToken;

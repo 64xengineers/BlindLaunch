@@ -95,8 +95,8 @@ contract SeedVault {
 /// @title MarketSeeder
 /// @notice Opens a Kuru order-book market at an auction's clearing price.
 ///
-/// `BlindAuctionV2.handOffSeed` approves the reserved amounts and calls `accept`, which pulls them,
-/// then tries `seed`. `seed` (anyone, retryable) creates the Kuru market once per (pair, params),
+/// `BlindAuctionV2.handOffSeed` approves the reserved amounts and calls `accept`, which pulls them.
+/// `seed` (anyone, retryable) then creates the Kuru market once per (pair, params),
 /// moves the funds into a fresh `SeedVault`, and posts an ask at the clearing price and a bid one
 /// tick below. After `lockUntil`, `unwind` (anyone) cancels what is left and pays everything,
 /// including fill proceeds, to the auction's authority. A position that was never seeded is

@@ -115,7 +115,7 @@ contract SeedTest is V2Base {
         assertEq(quote.balanceOf(address(seeder)), 1_500);
         assertEq(seeder.lastPrice(), 50);
         assertEq(seeder.lastLockUntil(), auction.getAuction(id).seedLockUntil);
-        assertEq(seeder.seedCalls(), 1);
+        assertEq(seeder.seedCalls(), 0, "opening the market is a separate call");
         assertEq(sale.allowance(address(auction), address(seeder)), 0);
         assertEq(quote.allowance(address(auction), address(seeder)), 0);
         assertEq(uint256(auction.getAuction(id).seedState), uint256(BlindAuctionV2.SeedState.HandedOff));
@@ -163,14 +163,15 @@ contract SeedTest is V2Base {
         auction.handOffSeed(id);
     }
 
-    function test_seedRevertLeavesFundsAtSeederForRetry() public {
+    function test_failingSeedLeavesFundsAtSeederForRetry() public {
         MockSeeder seeder = new MockSeeder();
         seeder.setRevertSeed(true);
         _withSeeder(seeder);
         uint256 id = _settleUndersubscribed();
         auction.handOffSeed(id);
-        assertEq(seeder.seedCalls(), 0);
         assertEq(quote.balanceOf(address(seeder)), 1_500);
+        vm.expectRevert(bytes("seed"));
+        seeder.seed(id);
         seeder.setRevertSeed(false);
         seeder.seed(id);
         assertEq(seeder.seedCalls(), 1);

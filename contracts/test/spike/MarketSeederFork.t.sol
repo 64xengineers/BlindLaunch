@@ -66,6 +66,7 @@ contract MarketSeederForkTest is V2Base {
         _closeAndOpenAll(id);
         auction.settle(id);
         auction.handOffSeed(id);
+        seeder.seed(id);
 
         MarketSeeder.Position memory pos = seeder.positionOf(id);
         assertTrue(pos.seeded, "seeded on real Kuru");

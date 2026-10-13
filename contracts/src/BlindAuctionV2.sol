@@ -558,8 +558,10 @@ contract BlindAuctionV2 {
         emit SeedReserved(auctionId, saleAmount, quoteAmount);
     }
 
-    /// @notice Hands the reserved seed to the seeder and tries to open the market. Anyone may call
-    ///         it; a failure reverts and can be retried, or the seed released after the lock.
+    /// @notice Hands the reserved seed to the seeder. Anyone may call it; a failure reverts and can be
+    ///         retried, or the seed released after the lock. Opening the market is a separate call to
+    ///         `seeder.seed`: a try/catch here would let a gas estimate pick a limit at which the market
+    ///         silently fails to open.
     function handOffSeed(uint256 auctionId) external nonReentrant {
         Auction storage a = _requireAuction(auctionId);
         if (a.seedState != SeedState.Reserved) revert NoSeed();
@@ -583,7 +585,6 @@ contract BlindAuctionV2 {
                 || quoteToken.allowance(address(this), address(target)) != 0
         ) revert AllowanceLeft();
         emit SeedHandedOff(auctionId);
-        try target.seed(auctionId) {} catch {}
     }
 
     /// @notice Returns a seed that was never handed off to the authority once the lock has passed.

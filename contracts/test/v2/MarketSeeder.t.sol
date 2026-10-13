@@ -106,6 +106,11 @@ contract MarketSeederTest is V2Base {
         return p;
     }
 
+    function _open(uint256 id) internal {
+        auction.handOffSeed(id);
+        seeder.seed(id);
+    }
+
     // ------------------------------------------------------------------ validate (S1 to S4)
 
     function test_validateAcceptsAnOnTickLadder() public view {
@@ -183,9 +188,10 @@ contract MarketSeederTest is V2Base {
         // 1e8 / gcd(24_990, 1e8) = 1e7 so Kuru can refund it exactly: 100 tokens.
         uint96 bidSize = 10_000_000_000;
 
+        auction.handOffSeed(id);
         vm.expectEmit(false, false, false, false, address(seeder));
         emit MarketSeeded(id, address(0), address(0), 25_000, 100e8, bidPrice, bidSize);
-        auction.handOffSeed(id);
+        seeder.seed(id);
 
         MarketSeeder.Position memory pos = seeder.positionOf(id);
         assertTrue(pos.seeded);
@@ -213,9 +219,20 @@ contract MarketSeederTest is V2Base {
         assertEq(sale.balanceOf(pos.vault), 0, "everything deposited into the margin account");
     }
 
-    function test_acceptOnlyOncePerAuction() public {
+    /// A try/catch around seed let wallet gas estimates pick a limit at which seed silently ran out
+    /// of gas (found rendering the app on anvil). The hand-off now never opens the market itself.
+    function test_handOffNeverOpensTheMarketItself() public {
         uint256 id = _settled();
         auction.handOffSeed(id);
+        assertFalse(seeder.positionOf(id).seeded);
+        assertEq(quote.balanceOf(address(seeder)), 250 * USD, "funds wait in the seeder");
+        seeder.seed(id);
+        assertTrue(seeder.positionOf(id).seeded);
+    }
+
+    function test_acceptOnlyOncePerAuction() public {
+        uint256 id = _settled();
+        _open(id);
         IMarketSeeder.SeedOrder memory order;
         order.auctionId = id;
         vm.prank(address(auction));
@@ -225,12 +242,12 @@ contract MarketSeederTest is V2Base {
 
     function test_reusesTheMarketForTheSamePairAndParams() public {
         uint256 first = _settled();
-        auction.handOffSeed(first);
+        _open(first);
         uint256 second = _create(_seededParams());
         _bid(second, cara, 1, 400);
         _closeAndOpenAll(second);
         auction.settle(second);
-        auction.handOffSeed(second);
+        _open(second);
         assertEq(kuruRouter.deployCount(), 1);
         assertEq(seeder.positionOf(first).market, seeder.positionOf(second).market);
         assertTrue(seeder.positionOf(first).vault != seeder.positionOf(second).vault, "one vault per auction");
@@ -242,7 +259,7 @@ contract MarketSeederTest is V2Base {
         MarketSeeder.KuruParams memory k = _kuru();
         k.minSize = 1e9; // 10 tokens
         uint256 id = _settled(_withKuru(p, k));
-        auction.handOffSeed(id);
+        _open(id);
         MarketSeeder.Position memory pos = seeder.positionOf(id);
         assertEq(pos.askId, 0, "5 tokens is below the minimum size");
         assertTrue(pos.bidId != 0);
@@ -250,7 +267,7 @@ contract MarketSeederTest is V2Base {
 
     function test_seedOnlyOnce() public {
         uint256 id = _settled();
-        auction.handOffSeed(id);
+        _open(id);
         vm.expectRevert(MarketSeeder.AlreadySeeded.selector);
         seeder.seed(id);
     }
@@ -260,6 +277,8 @@ contract MarketSeederTest is V2Base {
         kuruRouter.setFailDeploy(true);
         auction.handOffSeed(id);
         assertEq(uint256(auction.getAuction(id).seedState), uint256(BlindAuctionV2.SeedState.HandedOff));
+        vm.expectRevert(MarketSeeder.DeployFailed.selector);
+        seeder.seed(id);
         assertFalse(seeder.positionOf(id).seeded);
         assertEq(quote.balanceOf(address(seeder)), 250 * USD, "funds wait in the seeder");
 
@@ -273,14 +292,14 @@ contract MarketSeederTest is V2Base {
 
     function test_unwindWaitsForTheLock() public {
         uint256 id = _settled();
-        auction.handOffSeed(id);
+        _open(id);
         vm.expectRevert(MarketSeeder.Locked.selector);
         seeder.unwind(id);
     }
 
     function test_unwindAfterAPartialFillPaysEverythingToTheAuthority() public {
         uint256 id = _settled();
-        auction.handOffSeed(id);
+        _open(id);
         MarketSeeder.Position memory pos = seeder.positionOf(id);
         MockOrderBook market = MockOrderBook(pos.market);
 
@@ -329,7 +348,7 @@ contract MarketSeederTest is V2Base {
 
     function test_everyoneIsPaidAndNothingIsLeftBehind() public {
         uint256 id = _settled();
-        auction.handOffSeed(id);
+        _open(id);
         _claim(id, alice, 300 * TOKEN, 10_000 * USD - 300 * 2_500_000);
         _claim(id, bob, 200 * TOKEN, 10_000 * USD - 200 * 2_500_000);
         vm.prank(authority);
