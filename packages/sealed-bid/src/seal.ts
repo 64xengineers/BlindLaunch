@@ -68,12 +68,26 @@ export function openBid(input: OpenInput): Opened {
   return { m, hashOk, bid: hashOk ? decodeBid(m) : null, shared: [sharedA, sharedB] };
 }
 
+/** What `h` is bound to: the chain, the auction contract, the auction and the wallet that sends `commit`. */
+export type CommitmentDomain = Domain & { auctionId: bigint; bidder: Address };
+
 /**
  * Proves, before sending, that a sealed bid opens to its own `m` under every keeper pair, using
- * the bidder's ephemeral secret `r` (no keeper secret needed). A bid that fails this would be
- * forfeited on chain, so the app must never send it.
+ * the bidder's ephemeral secret `r` (no keeper secret needed). With `commitment` it also recomputes
+ * `h` from that chain, contract, auction, bidder and `m`, and requires the sealed bid's `h` to equal
+ * it (a missing `h` fails). A bid that fails either check would be forfeited on chain, so the app
+ * must never send it. Without `commitment`, `h` is not checked.
  */
-export function verifySealed(sealed: Pick<Sealed, "R" | "c" | "m" | "r">, keeperKeys: readonly [Point, Point, Point]): boolean {
+export function verifySealed(
+  sealed: Pick<Sealed, "R" | "c" | "m" | "r"> & { h?: Hex },
+  keeperKeys: readonly [Point, Point, Point],
+  commitment?: CommitmentDomain,
+): boolean {
+  if (commitment) {
+    if (sealed.h === undefined) return false;
+    const h = commitmentHash(commitment, commitment.auctionId, commitment.bidder, sealed.m);
+    if (h.toLowerCase() !== sealed.h.toLowerCase()) return false;
+  }
   if (!isValid(sealed.R) || sealed.R.x >= N) return false;
   if (mulBase(sealed.r).x !== sealed.R.x || mulBase(sealed.r).y !== sealed.R.y) return false;
   const shares = ([0, 1, 2] as const).map((i) => sealed.c[i] ^ shareKey(mul(keeperKeys[i], sealed.r), i));

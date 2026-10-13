@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeBid } from "../src/bid";
+import { commitmentHash, decodeBid } from "../src/bid";
 import { deterministicRng, G, mulBase, N } from "../src/curve";
 import { openBatches, openBid, seal, shareKey, sharedPoint, verifySealed } from "../src/seal";
 import type { KeeperIndex } from "../src/shamir";
@@ -88,6 +88,33 @@ describe("verifySealed", () => {
   it("rejects a seal checked against different keeper keys", () => {
     const other = [mulBase(44n), keeperKeys[1], keeperKeys[2]] as const;
     expect(verifySealed(sealOne("verify-keys"), other)).toBe(false);
+  });
+
+  const commitment = { ...domain, auctionId: 7n, bidder };
+
+  it("accepts an honest seal checked against its commitment domain", () => {
+    expect(verifySealed(sealOne("verify-h"), keeperKeys, commitment)).toBe(true);
+  });
+
+  it("rejects a seal whose h is wrong, which only the commitment check can see", () => {
+    const sealed = sealOne("verify-wrong-h");
+    const wrong = { ...sealed, h: commitmentHash(domain, 7n, bidder, sealed.m ^ 1n) };
+    // Every pair still opens to m, so the decryption-only check passes, yet on chain this bid is forfeited.
+    expect(verifySealed(wrong, keeperKeys)).toBe(true);
+    expect(verifySealed(wrong, keeperKeys, commitment)).toBe(false);
+  });
+
+  it("rejects a seal checked against another chain, contract, auction or bidder", () => {
+    const sealed = sealOne("verify-domain");
+    expect(verifySealed(sealed, keeperKeys, { ...commitment, chainId: 143n })).toBe(false);
+    expect(verifySealed(sealed, keeperKeys, { ...commitment, contract: "0x00000000000000000000000000000000000b1d01" })).toBe(false);
+    expect(verifySealed(sealed, keeperKeys, { ...commitment, auctionId: 8n })).toBe(false);
+    expect(verifySealed(sealed, keeperKeys, { ...commitment, bidder: "0x00000000000000000000000000000000000000b2" })).toBe(false);
+  });
+
+  it("fails closed when the commitment domain is given but h is missing", () => {
+    const { R, c, m, r } = sealOne("verify-no-h");
+    expect(verifySealed({ R, c, m, r }, keeperKeys, commitment)).toBe(false);
   });
 });
 
