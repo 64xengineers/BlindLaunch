@@ -37,3 +37,13 @@ The spike page is at `/spike/mera` (`apps/web/src/spikes/MeraSpike.tsx`). It nee
 | Kuru MarginAccount | `0xd029C2D98ff85D8F64799017fE00a59B1159CE02` (used in spike) | `0x2A68ba1833cDf93fa9Da1EEbd7F46242aD8E90c5` present |
 | USDC | n/a (testnet uses a public-mint `TestToken`) | `0x754704Bc059F8C67012fEd69BC8A327a5aafb603`, symbol `USDC`, 6 decimals |
 | `cast chain-id` | 10143 | 143 |
+
+## Kuru order ids (Task 2.0)
+
+Run: same fork command, test `test_contractCanCancelItsOwnRestingOrder`. Result: **PASS**.
+
+- After `addSellOrder`, the new order's id is `OrderBook.s_orderIdCounter()` (it was `1` on a fresh market).
+- `OrderBook.s_orders(id)` returns `(owner, size, prev, next, flippedId, price, flippedPrice, isBuy)`; owner was the seller contract, size `10e8`, price `25_000`, `isBuy` false.
+- `batchCancelOrders([id])` from the owning contract followed by `MarginAccount.withdraw(10e18, base)` returned the full deposit.
+- `bestBidAsk()` reports prices scaled to 18 decimals (`2.5e18` for price 25,000 at pricePrecision 1e4) and `type(uint256).max` as the best bid of an empty book. Do not compare it to `addSellOrder` prices without rescaling.
+- **Decision:** `MarketSeeder.seed` records each order id by reading `s_orderIdCounter()` right after posting; `unwind` cancels those ids itself. No log parsing is needed.

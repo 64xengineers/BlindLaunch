@@ -27,6 +27,22 @@ interface IKuruMarginAccount {
 interface IKuruOrderBook {
     function addBuyOrder(uint32 price, uint96 size, bool postOnly) external;
     function addSellOrder(uint32 price, uint96 size, bool postOnly) external;
+    function batchCancelOrders(uint40[] calldata orderIds) external;
+    function bestBidAsk() external view returns (uint256, uint256);
+    function s_orderIdCounter() external view returns (uint40);
+    function s_orders(uint40 orderId)
+        external
+        view
+        returns (
+            address owner,
+            uint96 size,
+            uint40 prev,
+            uint40 next,
+            uint40 flippedId,
+            uint32 price,
+            uint32 flippedPrice,
+            bool isBuy
+        );
 }
 
 contract SpikeToken {
@@ -103,6 +119,12 @@ contract SpikeTrader {
     function withdraw(SpikeToken token, uint256 amount) external {
         margin.withdraw(amount, address(token));
     }
+
+    function cancel(IKuruOrderBook book, uint40 orderId) external {
+        uint40[] memory ids = new uint40[](1);
+        ids[0] = orderId;
+        book.batchCancelOrders(ids);
+    }
 }
 
 contract KuruSpikeTest is Test {
@@ -143,5 +165,33 @@ contract KuruSpikeTest is Test {
         buyer.withdraw(base, 10e18);
         assertEq(quote.balanceOf(address(seller)), 25e6, "seller got quote in human-units * precision encoding");
         assertEq(base.balanceOf(address(buyer)), 10e18, "buyer got base");
+    }
+
+    /// Order ids: a contract reads its new order's id from s_orderIdCounter, checks it with
+    /// s_orders, cancels it and gets the full deposit back.
+    function test_contractCanCancelItsOwnRestingOrder() public {
+        SpikeToken base = new SpikeToken("Spike Base", "SBASE", 18);
+        SpikeToken quote = new SpikeToken("Spike Quote", "SQUOTE", 6);
+        SpikeTrader seller = new SpikeTrader(MARGIN);
+        IKuruOrderBook book = IKuruOrderBook(seller.deploy(ROUTER, address(base), address(quote)));
+
+        base.mint(address(seller), 10e18);
+        seller.deposit(base, 10e18);
+        seller.sell(book, 25_000, 10e8);
+
+        uint40 orderId = book.s_orderIdCounter();
+        (address owner, uint96 size,,,, uint32 price,, bool isBuy) = book.s_orders(orderId);
+        console2.log("order id", orderId);
+        assertEq(owner, address(seller), "owner");
+        assertEq(size, 10e8, "size");
+        assertEq(price, 25_000, "price");
+        assertFalse(isBuy, "side");
+        (uint256 bid, uint256 ask) = book.bestBidAsk();
+        console2.log("best bid", bid);
+        console2.log("best ask", ask);
+
+        seller.cancel(book, orderId);
+        seller.withdraw(base, 10e18);
+        assertEq(base.balanceOf(address(seller)), 10e18, "deposit returned after cancel");
     }
 }
