@@ -43,9 +43,20 @@ abstract contract V2Base is Test {
     }
 
     function _deploy() internal {
+        _deployAt(address(0));
+    }
+
+    /// @dev `where == address(0)` deploys normally; otherwise the auction is placed at `where`, so
+    ///      commitments sealed off chain for that contract address verify.
+    function _deployAt(address where) internal {
         keeperOwners = [makeAddr("keeper0"), makeAddr("keeper1"), makeAddr("keeper2")];
         registry = new KeeperRegistry(keeperOwners);
-        auction = new BlindAuctionV2(registry);
+        if (where == address(0)) {
+            auction = new BlindAuctionV2(registry);
+        } else {
+            deployCodeTo("BlindAuctionV2.sol:BlindAuctionV2", abi.encode(registry), where);
+            auction = BlindAuctionV2(where);
+        }
         registry.setAuction(address(auction));
         sale = new TestToken("Sale", "SALE", 0);
         quote = new TestToken("Quote", "QUOTE", 0);
@@ -115,7 +126,7 @@ abstract contract V2Base is Test {
             s.shared[i] = _pub(mulmod(r, secretKeys[i], N));
             s.c[i] = share ^ Secp256k1.shareKey(s.shared[i], uint8(i));
         }
-        s.h = keccak256(abi.encode(id, bidder, m));
+        s.h = keccak256(abi.encode(block.chainid, address(auction), id, bidder, m));
     }
 
     function _seal(uint256 id, address bidder, uint256 step, uint256 quantity) internal returns (Sealed memory) {
@@ -171,12 +182,6 @@ abstract contract V2Base is Test {
     function _closeAndOpenAll(uint256 id) internal {
         _close(id, 0, 1);
         _openAll(id);
-    }
-
-    function _tallyAll(uint256 id) internal {
-        while (!auction.getAuction(id).finalized) {
-            auction.tally(id, 1000);
-        }
     }
 
     function _claim(uint256 id, address bidder, uint256 saleOut, uint256 quoteOut) internal {

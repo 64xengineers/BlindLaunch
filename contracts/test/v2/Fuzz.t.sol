@@ -27,7 +27,11 @@ contract FuzzTest is V2Base {
             bidders[i] = address(uint160(0x1000 + i));
             uint256 step = uint256(keccak256(abi.encode(seed, i, "step"))) % 7; // 6 is off the ladder
             uint256 quantity = uint256(keccak256(abi.encode(seed, i, "qty"))) % 2001; // 0 is invalid
-            _bid(id, bidders[i], step, quantity);
+            Sealed memory s = _seal(id, bidders[i], step, quantity);
+            if (uint256(keccak256(abi.encode(seed, i, "forfeit"))) % 6 == 0) {
+                s.h = keccak256(abi.encode(seed, i)); // commitment mismatch: forfeits
+            }
+            _commitSealed(id, bidders[i], s);
         }
 
         uint8 choice = pairChoice % 3;
@@ -36,27 +40,28 @@ contract FuzzTest is V2Base {
         else _close(id, 1, 2);
         _openAll(id);
         auction.settle(id);
-        _tallyAll(id);
 
         (UniformClearing.Outcome memory ref, UniformClearing.Bid[] memory refBids) = _referenceClear(id, count, p);
         BlindAuctionV2.Auction memory a = auction.getAuction(id);
         assertEq(a.clearingStep, ref.clearingStep, "clearing step");
         assertEq(a.clearingPrice, ref.clearingPrice, "clearing price");
 
-        uint256 dust;
+        uint256 sum;
         uint256 cursor;
         for (uint32 slot = 0; slot < count; ++slot) {
+            BlindAuctionV2.Bid memory b = auction.getBid(id, slot);
             uint256 ours = auction.allocationOf(id, bidders[slot]);
             uint256 theirs;
-            if (auction.getBid(id, slot).counted) {
+            if (b.counted) {
                 theirs = refBids[cursor].allocation;
                 ++cursor;
             }
-            assertLe(ours, theirs, "never more than v1");
-            assertLe(theirs - ours, 1, "at most one unit of dust per bid");
-            dust += theirs - ours;
+            assertLe(ours > theirs ? ours - theirs : theirs - ours, 1, "within one lot of v1");
+            assertLe(ours, b.quantity, "never more than asked");
+            sum += ours;
         }
-        assertEq(a.totalSold + dust, ref.totalSold, "sold plus dust equals v1 sold");
+        assertEq(sum, a.totalSold, "allocations add up to totalSold");
+        assertEq(a.totalSold, ref.totalSold, "same total as v1, no dust");
         assertLe(a.totalSold, a.supplyLots);
 
         for (uint256 i = 0; i < count; ++i) {
@@ -65,6 +70,7 @@ contract FuzzTest is V2Base {
         }
         vm.prank(authority);
         auction.reclaim(id);
+        if (a.forfeitedTotal > 0) auction.burnForfeits(id);
         assertEq(sale.balanceOf(address(auction)), 0, "no sale tokens left");
         assertEq(quote.balanceOf(address(auction)), 0, "no quote tokens left");
     }

@@ -7,7 +7,13 @@ import {V2Base} from "./V2Base.sol";
 
 contract OpenTest is V2Base {
     event BidOpened(
-        uint256 indexed auctionId, uint32 slot, address indexed bidder, uint8 step, uint96 quantity, bool counted
+        uint256 indexed auctionId,
+        uint32 slot,
+        address indexed bidder,
+        uint8 step,
+        uint96 quantity,
+        bool counted,
+        bool forfeited
     );
 
     function _openOne(uint256 id, uint32 slot) internal {
@@ -23,14 +29,14 @@ contract OpenTest is V2Base {
             _bid(id, alice, 4, 321);
             _close(id, pairs[k][1], pairs[k][0]);
             vm.expectEmit(address(auction));
-            emit BidOpened(id, 0, alice, 4, 321, true);
+            emit BidOpened(id, 0, alice, 4, 321, true, false);
             _openOne(id, 0);
             BlindAuctionV2.Bid memory b = auction.getBid(id, 0);
             assertTrue(b.opened && b.counted);
             assertEq(b.step, 4);
             assertEq(b.quantity, 321);
             assertEq(auction.qtyAtStepOf(id)[4], 321);
-            assertEq(auction.slotsAtStepLength(id, 4), 1);
+            assertEq(b.prefix, 0);
         }
     }
 
@@ -82,8 +88,11 @@ contract OpenTest is V2Base {
             BlindAuctionV2.Bid memory b = auction.getBid(id, slot);
             assertTrue(b.opened);
             assertFalse(b.counted);
+            assertEq(b.forfeited, slot == 4, "only the commitment mismatch forfeits");
         }
-        assertEq(auction.getAuction(id).openedCount, 5);
+        BlindAuctionV2.Auction memory a = auction.getAuction(id);
+        assertEq(a.openedCount, 5);
+        assertEq(a.forfeitedTotal, DEPOSIT);
     }
 
     function test_notionalAboveDepositIsNotCounted() public {
@@ -103,6 +112,7 @@ contract OpenTest is V2Base {
         _closeAndOpenAll(id);
         assertTrue(auction.getBid(id, 0).counted);
         assertFalse(auction.getBid(id, 1).counted);
+        assertTrue(auction.getBid(id, 1).forfeited, "a copied bid does not match its copier's commitment");
     }
 
     function test_inconsistentSharesDependOnTheFrozenPairOnly() public {
@@ -121,6 +131,21 @@ contract OpenTest is V2Base {
         _close(second, 2, 1);
         _openAll(second);
         assertFalse(auction.getBid(second, 0).counted, "invalid under (1,2)");
+        assertTrue(auction.getBid(second, 0).forfeited, "and the deposit is forfeited, so the option is worthless");
+    }
+
+    function test_prefixesFollowOpeningOrderPerStep() public {
+        uint256 id = _create();
+        _bid(id, alice, 2, 5);
+        _bid(id, bob, 3, 7);
+        _bid(id, cara, 2, 3);
+        _bid(id, dan, 2, 4);
+        _closeAndOpenAll(id);
+        assertEq(auction.getBid(id, 0).prefix, 0);
+        assertEq(auction.getBid(id, 1).prefix, 0);
+        assertEq(auction.getBid(id, 2).prefix, 5);
+        assertEq(auction.getBid(id, 3).prefix, 8);
+        assertEq(auction.qtyAtStepOf(id)[2], 12);
     }
 
     function test_openManySkipsOpenedSlots() public {

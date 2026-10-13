@@ -1,5 +1,7 @@
 {
-  "count": 4,
+  "count": 6,
+  "chainId": "0x7a69",
+  "contract": "0x00000000000000000000000000000000000b1d00",
   "cases": [
     {
       "label": "pair01",
@@ -21,7 +23,7 @@
         "0x6cbc1d30eb9300948bdbed294504f9ecfb1ff02a76ded440a97505fa729dbc55",
         "0xce1e234924970daa6e263efcbfc55870953a8939d187c9a9fc13a4d201708566"
       ],
-      "h": "0x1ad5674f6e256f83b29041d6b4de39a15d08b060da8ec17a318d9bc3c5c4a4dc",
+      "h": "0xc4cabed1a6aebb9cc84176e2d72a739bc5f04c4d8304c881f4945b3e57398226",
       "Sx": [
         "0xb752f7418450901dc2e3b9382b59d492327a5b3014cc13a805d1e25933e42b8b",
         "0x8821015a3ff426ab90cc3ccbc109196901ed8bd777c842d952d7340e0566e9cf",
@@ -32,7 +34,8 @@
         "0x2276d1d002aa6847d103f02e16ce07806c1ce1918d6ade38835588d81671aba8",
         "0x9dbf097d16a0cd83ee18bed7df4a0c1df838842756f12c3226eab2d5feee8c95"
       ],
-      "counted": true
+      "counted": true,
+      "forfeited": false
     },
     {
       "label": "pair02",
@@ -54,7 +57,7 @@
         "0x4fa0247978a5d715083f4d8b03226740413a8aebbef5043774c54514033a149e",
         "0x45c89ffe6b7266f4eec5b49114f22864f0e84f476ae1165461c3c604953363bc"
       ],
-      "h": "0xf5439f6592c49b8e671cf3f7f9256a3ec10f626b1be17829ce8e9a7f23d38a77",
+      "h": "0xcd39b923c2eaba8d526d7682db80a3b23963c46c5b6ff35e2193f7246facd38e",
       "Sx": [
         "0xcb08ad1cb8ea38e91b84a2dd22a355f3ad9bbc848287203cd4abb232c85eaf91",
         "0x925df50b709e3a01ff55da9f23e4b6fc574fd8d482b50141cdfe59d6ff2eef09",
@@ -65,7 +68,8 @@
         "0xbf2c45ec45ffadf9d51dd887ee753c137b44ae9a06a3a99a6e207925b21e7695",
         "0x87b72a6546d8bca14d2ba613d63ed681f31452a7cc86f4ebd3e21c872fe75cca"
       ],
-      "counted": true
+      "counted": true,
+      "forfeited": false
     },
     {
       "label": "pair12",
@@ -87,7 +91,7 @@
         "0xe73f4c95723086bf6560c130fecdee63b51ab341078be846c047a211c0084fee",
         "0xcfd03afd4c7c647aea60190e45ad8e450644d20af743fbee70a8100be173175c"
       ],
-      "h": "0x2fe8916d6337630b86334b44f6da87cabad92a79d914773d91025ce6e17a70fc",
+      "h": "0x83491f9826aecd06202ade1aa19fd3d9c1830de5c9c5df0e70fa95ff7018785e",
       "Sx": [
         "0xdee8d8127c26aed1472f1b22e64b30a19e4ec994fa644e65bed9691797b40721",
         "0xc2d80f653e3c217ef12f22bfd36ca2f0e225ec850e03ab71dd7a0b73bf0a4e24",
@@ -98,7 +102,76 @@
         "0xc495bab503a51c605338ace1823f825e2a604a6f4948fe636719e3ee0142ba9f",
         "0x1c90401d7ba7e3ad5475f750f8eadf85b6ffbba676ff9bb36ddbe31bddb2234"
       ],
-      "counted": true
+      "counted": true,
+      "forfeited": false
+    },
+    {
+      "label": "stepOffLadder",
+      "bidder": "0xAA6B07370782f264c1FE897e992b7ce596a2CBd8",
+      "step": "0x40",
+      "quantity": "0x5",
+      "m": "0x40000000000000000000000005b0c6cd0d8fb9069e85054a7c96ffbd81",
+      "pairA": "0x0",
+      "pairB": "0x1",
+      "secretKeys": [
+        "0x8606f48b702b406bee96f4b14a60b1428a371f092f82fb6041562161438a5cff",
+        "0xed4e51a1522002caff7497e0cc0fced61ec5350110c4a648329364f8583d6ee3",
+        "0x37f18191f14b2765957dfb349709ae70abcf615add56134691c17611af323db6"
+      ],
+      "Rx": "0x5cc791e9205bb5cf10d3c412b8bbcaf0bf0afdf3a5513e5fe6acd4a87709d71c",
+      "Ry": "0x62d29a4b5ac553161a2225b248950b795aff16cb659edc30a949721bef5bcfe2",
+      "c": [
+        "0x9190ba4383681965481ad19ac9aa21ace5a59356cf5f96cf96b743f140a45915",
+        "0xe6ab7e386d4a79e5063c66a88bf4aabe48b724175cec376fd463ec4030cf178c",
+        "0x8c063ccd1cc2f2e1e99f4ab56de0a4fc6fb9abfec2d4406e9f64c654197086c9"
+      ],
+      "h": "0x994b15ffbb3924d69b9a2f61304aa194e08f52b62c58ebd2067072f39047fcec",
+      "Sx": [
+        "0x897eff2444342cf7a235e33717836a434e1f10e71eab385c5d2edd6db0ebd7f1",
+        "0x74296ad2f6109c5c77612cb4b52159c92e3355bf79e4b5339251ac82405563ff",
+        "0x705e8b863116cf61c284a51e892bb12e1652e774a2776ea7fe7e29bd5f09c0a0"
+      ],
+      "Sy": [
+        "0x619d27e925f40e0de599bb11ea66394482a044579c8d456876e5d4a55400482a",
+        "0xbb3692fcf00a682fc801b1c8212c49dd06643539ff271bc2d6d97bff84b87e9a",
+        "0xd4e779f5a09fc5ae339e5fbf60c9da38e6d1083e9e6007404efebe0baf8a33f0"
+      ],
+      "counted": false,
+      "forfeited": false
+    },
+    {
+      "label": "zeroQuantity",
+      "bidder": "0xd92FBB19Fe3b0401656FFCaAB778C0b3D7577321",
+      "step": "0x1",
+      "quantity": "0x0",
+      "m": "0x1000000000000000000000000f3c37ede7e6b03df807c184ba01f9fbd",
+      "pairA": "0x0",
+      "pairB": "0x2",
+      "secretKeys": [
+        "0x334732226c9ceb57acda39ee4d4ad05b475cf753e1816096ae9adbd7f0aa0870",
+        "0x4ebbad1466f98f12bb7d5d358213186eff907bbee8a76ae7cac36f46a16a629c",
+        "0xd8d4036947602433b0affd0f5a7280f872fd305c1ffe0409249fe288fc1b0fbf"
+      ],
+      "Rx": "0x584c15fa39fd057ec0c8dd554073e25e4d07442602e8ad28182ff06a8e02d9df",
+      "Ry": "0x5b5d97792416cbc5223f92a20c346a56b1d8e527ff4436c9b97b4591f4d3541f",
+      "c": [
+        "0x179db4e4108e934d7ba9d8f128e25179b57bed0bbd5a73a60cbbb315d1b5fab4",
+        "0x93bcbffb4dc6b704281b5d6909fd0425bf1a018516b53bfd035c15f7534873b6",
+        "0x502c4a9caf216a49259a81accb8fbaae93db782b203a5c4d410526bf63b493d0"
+      ],
+      "h": "0xb60e212c8e05a24a2734a2011c5c3580d12f7cdd6f3d225be72e3f284e9b7d82",
+      "Sx": [
+        "0x55168464fd0d380713f264e61c14661e2fa4716f94c93b9fe8ed4bbab4db1c49",
+        "0xfbd8d4cc6629102f79e639d92b863472ef2f2d55f2618339c495507adc105566",
+        "0x46ce1dcc23e2fa68b19e6b5769e329d2c6ea0f29bb7da120c7bc9a62b961bb65"
+      ],
+      "Sy": [
+        "0x402311abb8fc1f8d47c9712fc8bc923146801347c3cbcc7f1d53ae717beb292a",
+        "0x7d0794039c7ed73edae8a302cbbf2a4693aacbaf5bb668373e8071815daf6a3",
+        "0x2824afcd682fefc88d169b71faa7649455545b4bcae841bf884d321beb37c905"
+      ],
+      "counted": false,
+      "forfeited": false
     },
     {
       "label": "corruptPair01",
@@ -120,7 +193,7 @@
         "0x23b358dcf701855ca1462a74b8df628a4cdb6da4864a607702e5f95b22f86f8d",
         "0x684aefda3faa58a0bea8be9cc3f6799b7428d72d0de5959f1dcf745177b1244c"
       ],
-      "h": "0x1bd7d9fb13b3423a58086f5f30b32602a740685ce6a0152c4a98048bcb56343e",
+      "h": "0x9a1ba53ebf97f74c70a61778b9cb8c1ba1b7f31765db4f638d1728e54f32b745",
       "Sx": [
         "0xec27a194f97586131265788b10b8506b679ce87ab3ee7055fe9a21bc7b9164fe",
         "0xb1def5f9ddfe7af509d432fcea624da5c2f20ec3caacf7c16f8b1ece63617ae0",
@@ -131,7 +204,8 @@
         "0xaa86c96be41017f6a847c2b51a2aa340a032085447c3f9b7eb2cd72e52886f61",
         "0xfa508da3239e623d48738ad715f8b6447d8015a73fa3dec1105b2ee7a908ae41"
       ],
-      "counted": false
+      "counted": false,
+      "forfeited": true
     }
   ]
 }

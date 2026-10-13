@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {BlindAuctionV2} from "../../src/BlindAuctionV2.sol";
-import {ReentrantToken} from "./Mocks.sol";
+import {HostileToken, ReentrantToken} from "./Mocks.sol";
 import {V2Base} from "./V2Base.sol";
 
 contract ClaimTest is V2Base {
@@ -40,7 +40,7 @@ contract ClaimTest is V2Base {
         _claim(id, bob, 10, DEPOSIT - 500);
     }
 
-    function test_dustReturnsToAuthority() public {
+    function test_proRataLeavesNothingUnsold() public {
         BlindAuctionV2.CreateParams memory p = _params();
         p.supply = 10;
         uint256 id = _create(p);
@@ -51,11 +51,12 @@ contract ClaimTest is V2Base {
         auction.settle(id);
         _claim(id, alice, 3, DEPOSIT - 70 * 3);
         _claim(id, bob, 3, DEPOSIT - 70 * 3);
-        _claim(id, cara, 3, DEPOSIT - 70 * 3);
+        _claim(id, cara, 4, DEPOSIT - 70 * 4);
         uint256 before = sale.balanceOf(authority);
         vm.prank(authority);
         auction.reclaim(id);
-        assertEq(sale.balanceOf(authority) - before, 1);
+        assertEq(sale.balanceOf(authority) - before, 0);
+        assertEq(quote.balanceOf(authority), 70 * 10);
         assertEq(sale.balanceOf(address(auction)), 0);
         assertEq(quote.balanceOf(address(auction)), 0);
     }
@@ -72,18 +73,71 @@ contract ClaimTest is V2Base {
         _claim(id, alice, 2e18, DEPOSIT - 50 * 2);
     }
 
-    function test_claimToAnotherAddress() public {
+    function test_claimLegsSeparatelyToAnotherAddress() public {
         uint256 id = _reference();
         address vault = makeAddr("vault");
-        vm.prank(alice);
-        auction.claimTo(id, vault);
+        vm.startPrank(alice);
+        auction.claimTokens(id, vault);
         assertEq(sale.balanceOf(vault), 400);
-        vm.prank(alice);
+        vm.expectRevert(BlindAuctionV2.AlreadyClaimed.selector);
+        auction.claimTokens(id, vault);
+        auction.claim(id);
+        assertEq(quote.balanceOf(alice), DEPOSIT - 60 * 400, "claim pays the remaining leg");
         vm.expectRevert(BlindAuctionV2.AlreadyClaimed.selector);
         auction.claim(id);
+        vm.stopPrank();
         vm.prank(bob);
         vm.expectRevert(BlindAuctionV2.ZeroAddress.selector);
-        auction.claimTo(id, address(0));
+        auction.claimRefund(id, address(0));
+    }
+
+    /// Audit M1: a paused sale token must not hold back the winner's quote refund.
+    function test_pausedSaleTokenDoesNotBlockRefund() public {
+        HostileToken token = new HostileToken();
+        token.mint(authority, 1000);
+        vm.prank(authority);
+        token.approve(address(auction), 1000);
+        BlindAuctionV2.CreateParams memory p = _params();
+        p.saleToken = address(token);
+        uint256 id = _create(p);
+        _bid(id, alice, 5, 1000);
+        _closeAndOpenAll(id);
+        auction.settle(id);
+
+        token.setPaused(true);
+        vm.startPrank(alice);
+        vm.expectRevert(BlindAuctionV2.TransferFailed.selector);
+        auction.claim(id);
+        auction.claimRefund(id, alice);
+        vm.stopPrank();
+        assertEq(quote.balanceOf(alice), DEPOSIT - 100 * 1000);
+
+        token.setPaused(false);
+        vm.prank(alice);
+        auction.claimTokens(id, alice);
+        assertEq(token.balanceOf(alice), 1000);
+    }
+
+    function test_forfeitedBidGetsNothingAndIsBurned() public {
+        uint256 id = _create();
+        _bid(id, alice, 1, 10);
+        Sealed memory bad = _seal(id, bob, 1, 10);
+        bad.h = keccak256("mismatch");
+        _commitSealed(id, bob, bad);
+        _closeAndOpenAll(id);
+        vm.expectRevert(BlindAuctionV2.NothingToBurn.selector);
+        auction.burnForfeits(id);
+        auction.settle(id);
+        _claim(id, bob, 0, 0);
+        _claim(id, alice, 10, DEPOSIT - 50 * 10);
+        auction.burnForfeits(id);
+        assertEq(quote.balanceOf(auction.FORFEIT_SINK()), DEPOSIT);
+        vm.expectRevert(BlindAuctionV2.NothingToBurn.selector);
+        auction.burnForfeits(id);
+        vm.prank(authority);
+        auction.reclaim(id);
+        assertEq(quote.balanceOf(address(auction)), 0);
+        assertEq(sale.balanceOf(address(auction)), 0);
     }
 
     function test_claimGuards() public {
@@ -95,20 +149,6 @@ contract ClaimTest is V2Base {
         vm.prank(bob);
         vm.expectRevert(BlindAuctionV2.UnknownBidder.selector);
         auction.claim(id);
-    }
-
-    function test_claimsOpenBeforeTallyFinishes() public {
-        BlindAuctionV2.CreateParams memory p = _params();
-        p.supply = 100;
-        uint256 id = _create(p);
-        uint256 bidders = auction.TALLY_IN_SETTLE() + 4;
-        for (uint256 i = 0; i < bidders; ++i) {
-            _bid(id, address(uint160(0x10000 + i)), 0, 1);
-        }
-        _closeAndOpenAll(id);
-        auction.settle(id);
-        assertFalse(auction.getAuction(id).finalized);
-        _claim(id, address(uint160(0x10000)), 0, DEPOSIT);
     }
 
     function test_reclaimGuards() public {
@@ -142,8 +182,14 @@ contract ClaimTest is V2Base {
         auction.cancel(id);
         _claim(id, alice, 0, DEPOSIT);
         _claim(id, bob, 0, DEPOSIT);
-        vm.prank(authority);
-        auction.reclaimTo(id, makeAddr("treasury"));
+        vm.startPrank(authority);
+        auction.reclaimUnsold(id, makeAddr("treasury"));
+        vm.expectRevert(BlindAuctionV2.ZeroAddress.selector);
+        auction.reclaimProceeds(id, address(0));
+        auction.reclaimProceeds(id, authority);
+        vm.expectRevert(BlindAuctionV2.AlreadyReclaimed.selector);
+        auction.reclaim(id);
+        vm.stopPrank();
         assertEq(sale.balanceOf(makeAddr("treasury")), 1000);
         assertEq(quote.balanceOf(address(auction)), 0);
     }

@@ -1,11 +1,11 @@
 import { encodePacked, keccak256, type Address, type Hex } from "viem";
-import { commitmentHash, decodeBid, encodeBid, type Bid } from "./bid";
-import { bytesToBigInt, defaultRng, mul, mulBase, N, randomScalar, type Point, type Rng } from "./curve";
+import { commitmentHash, decodeBid, encodeBid, type Bid, type Domain } from "./bid";
+import { bytesToBigInt, defaultRng, isValid, mul, mulBase, N, randomScalar, type Point, type Rng } from "./curve";
 import { shamirReconstruct, shamirSplit, type KeeperIndex } from "./shamir";
 
 export type Ciphertexts = readonly [bigint, bigint, bigint];
 
-export type SealInput = {
+export type SealInput = Domain & {
   auctionId: bigint;
   bidder: Address;
   step: number;
@@ -16,7 +16,7 @@ export type SealInput = {
 /** What `commit` takes (`R`, `c`, `h`) plus the bidder's private record (`m`, `r`). */
 export type Sealed = { R: Point; c: [bigint, bigint, bigint]; h: Hex; m: bigint; r: bigint };
 
-export type OpenInput = {
+export type OpenInput = Domain & {
   auctionId: bigint;
   bidder: Address;
   R: Point;
@@ -38,7 +38,9 @@ export function sharedPoint(secretKey: bigint, R: Point): Point {
   return mul(R, secretKey);
 }
 
+/** Seals a bid. Pass the keeper keys read from `keeperKeysOf(auctionId)`, never cached ones. */
 export function seal(input: SealInput, rng: Rng = defaultRng): Sealed {
+  if (!input.keeperKeys.every(isValid)) throw new RangeError("invalid keeper key");
   const nonce = bytesToBigInt(rng(16));
   const m = encodeBid({ step: input.step, quantity: input.quantity, nonce });
   const shares = shamirSplit(m, rng);
@@ -53,7 +55,7 @@ export function seal(input: SealInput, rng: Rng = defaultRng): Sealed {
     shares[1] ^ shareKey(mul(input.keeperKeys[1], r), 1),
     shares[2] ^ shareKey(mul(input.keeperKeys[2], r), 2),
   ];
-  return { R, c, h: commitmentHash(input.auctionId, input.bidder, m), m, r };
+  return { R, c, h: commitmentHash(input, input.auctionId, input.bidder, m), m, r };
 }
 
 /** Mirrors `BlindAuctionV2._decrypt` and the hash check in `_parse`. */
@@ -62,6 +64,6 @@ export function openBid(input: OpenInput): Opened {
   const sharedA = sharedPoint(input.secretKeys[0], input.R);
   const sharedB = sharedPoint(input.secretKeys[1], input.R);
   const m = shamirReconstruct(a, b, input.c[a] ^ shareKey(sharedA, a), input.c[b] ^ shareKey(sharedB, b));
-  const hashOk = commitmentHash(input.auctionId, input.bidder, m).toLowerCase() === input.h.toLowerCase();
+  const hashOk = commitmentHash(input, input.auctionId, input.bidder, m).toLowerCase() === input.h.toLowerCase();
   return { m, hashOk, bid: hashOk ? decodeBid(m) : null, shared: [sharedA, sharedB] };
 }

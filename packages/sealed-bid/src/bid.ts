@@ -25,9 +25,15 @@ export function decodeBid(m: bigint): Bid | null {
   };
 }
 
-/** `keccak256(abi.encode(auctionId, bidder, m))`, the `h` stored at commit. */
-export function commitmentHash(auctionId: bigint, bidder: Address, m: bigint): Hex {
+/** The chain and auction contract a commitment is bound to. */
+export type Domain = { chainId: bigint; contract: Address };
+
+/** `keccak256(abi.encode(chainid, contract, auctionId, bidder, m))`, the `h` stored at commit. */
+export function commitmentHash(domain: Domain, auctionId: bigint, bidder: Address, m: bigint): Hex {
   return keccak256(
-    encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "uint256" }], [auctionId, bidder, m]),
+    encodeAbiParameters(
+      [{ type: "uint256" }, { type: "address" }, { type: "uint256" }, { type: "address" }, { type: "uint256" }],
+      [domain.chainId, domain.contract, auctionId, bidder, m],
+    ),
   );
 }

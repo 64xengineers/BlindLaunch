@@ -37,12 +37,34 @@ contract GasTest is V2Base {
         uint256 settleGas = settleBefore - gasleft();
 
         console2.log("openMany gas per bid", openGas / BIDS);
-        console2.log("settle + tally of 200 at-step bids", settleGas);
-        assertTrue(auction.getAuction(id).finalized);
+        console2.log("settle with 200 bids at a pro-rata step", settleGas);
+        assertEq(auction.getAuction(id).totalSold, 100);
         assertLt(openGas / BIDS, OPEN_BOUND);
         assertLt(settleGas, SETTLE_BOUND);
     }
 
-    uint256 internal constant OPEN_BOUND = 57_000;
-    uint256 internal constant SETTLE_BOUND = 370_000;
+    uint256 internal constant OPEN_BOUND = 54_000;
+    uint256 internal constant SETTLE_BOUND = 129_000;
+
+    function _settleGas(uint256 bidders) internal returns (uint256 used) {
+        BlindAuctionV2.CreateParams memory p = _params();
+        p.supply = 1;
+        uint256 id = _create(p);
+        for (uint256 i = 0; i < bidders; ++i) {
+            _bid(id, address(uint160(0x40000 + (bidders << 16) + i)), 0, 1);
+        }
+        _closeAndOpenAll(id);
+        uint256 before = gasleft();
+        auction.settle(id);
+        used = before - gasleft();
+    }
+
+    /// Settle walks the price ladder, never the bids.
+    function test_settleCostDoesNotGrowWithBids() public {
+        uint256 few = _settleGas(2);
+        uint256 many = _settleGas(200);
+        console2.log("settle with 2 bids", few);
+        console2.log("settle with 200 bids", many);
+        assertLt(many > few ? many - few : few - many, 5_000);
+    }
 }

@@ -5,6 +5,8 @@ import {BlindAuctionV2} from "../../src/BlindAuctionV2.sol";
 import {V2Base} from "./V2Base.sol";
 
 contract SettleTest is V2Base {
+    event AuctionSettled(uint256 indexed auctionId, uint32 clearingStep, uint256 clearingPrice, uint256 totalSold);
+
     function test_referenceExampleClearsAt60() public {
         uint256 id = _create();
         _bid(id, alice, 5, 400);
@@ -13,6 +15,8 @@ contract SettleTest is V2Base {
         _bid(id, dan, 0, 400);
         _closeAndOpenAll(id);
         assertTrue(auction.canSettle(id));
+        vm.expectEmit(address(auction));
+        emit AuctionSettled(id, 1, 60, 1000);
         auction.settle(id);
 
         BlindAuctionV2.Auction memory a = auction.getAuction(id);
@@ -22,7 +26,6 @@ contract SettleTest is V2Base {
         assertEq(a.aboveTotal, 700);
         assertEq(a.remaining, 300);
         assertEq(a.atDemand, 500);
-        assertTrue(a.finalized);
         assertEq(a.totalSold, 1000);
         assertEq(auction.allocationOf(id, alice), 400);
         assertEq(auction.allocationOf(id, bob), 300);
@@ -40,7 +43,6 @@ contract SettleTest is V2Base {
         assertEq(a.clearingStep, 0);
         assertEq(a.clearingPrice, 50);
         assertEq(a.totalSold, 150);
-        assertTrue(a.finalized);
     }
 
     function test_noBidsSellsNothingAtPriceZero() public {
@@ -50,7 +52,6 @@ contract SettleTest is V2Base {
         BlindAuctionV2.Auction memory a = auction.getAuction(id);
         assertEq(a.clearingPrice, 0);
         assertEq(a.totalSold, 0);
-        assertTrue(a.finalized);
     }
 
     function test_onlyInvalidBidsSellsNothing() public {
@@ -74,7 +75,7 @@ contract SettleTest is V2Base {
         assertEq(auction.allocationOf(id, bob), 400);
     }
 
-    function test_proRataDustStaysUnsold() public {
+    function test_proRataSellsExactlyTheRemainingSupply() public {
         BlindAuctionV2.CreateParams memory p = _params();
         p.supply = 10;
         uint256 id = _create(p);
@@ -84,9 +85,45 @@ contract SettleTest is V2Base {
         _closeAndOpenAll(id);
         auction.settle(id);
         BlindAuctionV2.Auction memory a = auction.getAuction(id);
-        assertEq(a.totalSold, 9);
+        assertEq(a.totalSold, 10);
         assertEq(auction.allocationOf(id, alice), 3);
-        assertEq(auction.allocationOf(id, cara), 3);
+        assertEq(auction.allocationOf(id, bob), 3);
+        assertEq(auction.allocationOf(id, cara), 4, "cumulative rounding gives the last unit to the last opened");
+    }
+
+    /// Audit H3: floor rounding sold nothing here.
+    function test_oneLotTwoBiddersSellsTheLot() public {
+        BlindAuctionV2.CreateParams memory p = _params();
+        p.supply = 1;
+        uint256 id = _create(p);
+        _bid(id, alice, 2, 1);
+        _bid(id, bob, 2, 1);
+        _closeAndOpenAll(id);
+        auction.settle(id);
+        assertEq(auction.getAuction(id).totalSold, 1);
+        assertEq(auction.allocationOf(id, alice) + auction.allocationOf(id, bob), 1);
+    }
+
+    /// Audit H3: one refunded 1-lot sybil halved this sale under floor rounding.
+    function test_oneLotSybilCannotShrinkTheSale() public {
+        BlindAuctionV2.CreateParams memory p = _params();
+        p.supply = 10;
+        uint256 id = _create(p);
+        for (uint256 i = 0; i < 5; ++i) {
+            _bid(id, address(uint160(0x3000 + i)), 2, 2);
+        }
+        _bid(id, makeAddr("sybil"), 2, 1);
+        _closeAndOpenAll(id);
+        auction.settle(id);
+        assertEq(auction.getAuction(id).totalSold, 10);
+        uint256 sum;
+        for (uint256 i = 0; i < 5; ++i) {
+            uint256 lots = auction.allocationOf(id, address(uint160(0x3000 + i)));
+            assertLe(lots, 2);
+            sum += lots;
+        }
+        sum += auction.allocationOf(id, makeAddr("sybil"));
+        assertEq(sum, 10);
     }
 
     function test_needsAllBidsOpenedAndTwoKeys() public {
@@ -119,37 +156,21 @@ contract SettleTest is V2Base {
         assertEq(auction.getAuction(id).totalSold, 1);
     }
 
-    function test_largeProRataNeedsTally() public {
+    function test_manySmallBidsAtTheClearingStepSellEverything() public {
         BlindAuctionV2.CreateParams memory p = _params();
         p.supply = 100;
         uint256 id = _create(p);
-        uint256 bidders = auction.TALLY_IN_SETTLE() + 4;
+        uint256 bidders = 260;
         for (uint256 i = 0; i < bidders; ++i) {
             _bid(id, address(uint160(0x10000 + i)), 0, 1);
         }
         _closeAndOpenAll(id);
         auction.settle(id);
-        BlindAuctionV2.Auction memory a = auction.getAuction(id);
-        assertFalse(a.finalized);
-        assertEq(a.tallyCursor, auction.TALLY_IN_SETTLE());
-
-        vm.expectRevert(BlindAuctionV2.NotFinalized.selector);
-        vm.prank(authority);
-        auction.reclaim(id);
-
-        auction.tally(id, 2);
-        assertFalse(auction.getAuction(id).finalized);
-        auction.tally(id, 100);
-        a = auction.getAuction(id);
-        assertTrue(a.finalized);
-        assertEq(a.totalSold, 0, "floor(100 * 1 / 260) = 0 for every bid");
-        vm.expectRevert(BlindAuctionV2.NothingToTally.selector);
-        auction.tally(id, 1);
-    }
-
-    function test_tallyBeforeSettleReverts() public {
-        uint256 id = _create();
-        vm.expectRevert(BlindAuctionV2.NothingToTally.selector);
-        auction.tally(id, 1);
+        assertEq(auction.getAuction(id).totalSold, 100);
+        uint256 sum;
+        for (uint256 i = 0; i < bidders; ++i) {
+            sum += auction.allocationOf(id, address(uint160(0x10000 + i)));
+        }
+        assertEq(sum, 100);
     }
 }

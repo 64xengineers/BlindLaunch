@@ -12,12 +12,16 @@ contract VectorsTest is V2Base {
         uint256 count = vm.parseJsonUint(json, ".count");
         assertGt(count, 0);
         for (uint256 k = 0; k < count; ++k) {
+            // Every case uses the same contract address, so each runs in a clean copy of the state.
+            uint256 snapshot = vm.snapshotState();
             _runCase(json, string.concat(".cases[", vm.toString(k), "]"));
+            vm.revertToState(snapshot);
         }
     }
 
     function _runCase(string memory json, string memory at) internal {
-        _deploy();
+        assertEq(block.chainid, vm.parseJsonUint(json, ".chainId"), "vectors sealed for this chain id");
+        _deployAt(vm.parseJsonAddress(json, ".contract"));
         uint256[] memory secretKeys = vm.parseJsonUintArray(json, string.concat(at, ".secretKeys"));
         _enqueueVectorKeys(secretKeys);
         uint256 id = _createWideAuction();
@@ -78,7 +82,9 @@ contract VectorsTest is V2Base {
     function _assertOpened(string memory json, string memory at, uint256 id) internal view {
         BlindAuctionV2.Bid memory b = auction.getBid(id, 0);
         bool counted = vm.parseJsonBool(json, string.concat(at, ".counted"));
-        assertEq(b.counted, counted, vm.parseJsonString(json, string.concat(at, ".label")));
+        string memory label = vm.parseJsonString(json, string.concat(at, ".label"));
+        assertEq(b.counted, counted, label);
+        assertEq(b.forfeited, vm.parseJsonBool(json, string.concat(at, ".forfeited")), label);
         if (counted) {
             assertEq(b.step, vm.parseJsonUint(json, string.concat(at, ".step")));
             assertEq(b.quantity, vm.parseJsonUint(json, string.concat(at, ".quantity")));

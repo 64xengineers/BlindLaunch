@@ -14,23 +14,31 @@ import {Secp256k1} from "./Secp256k1.sol";
 /// key for this auction and R = r·G is stored with the bid. After the commit deadline two keepers
 /// publish their secret keys; the second publication freezes the pair. Anyone can then open each
 /// bid: the contract checks the supplied shared points with ecrecover, decrypts two shares,
-/// reconstructs m and checks keccak256(abi.encode(auctionId, bidder, m)) against the commitment.
-/// Bidders never act after `commit`.
+/// reconstructs m and checks keccak256(abi.encode(chainid, this, auctionId, bidder, m)) against
+/// the commitment. Bidders never act after `commit`.
+///
+/// A bid whose reconstruction does not match its commitment forfeits its deposit to
+/// `FORFEIT_SINK`. That is the only outcome that can depend on which keeper pair opens a bid, so
+/// a bidder cannot gain an exit option from crafting inconsistent shares. Bids that match but
+/// fall outside the ladder or the notional limits are refunded in full.
 ///
 /// Quantities are lots of `lotSize` sale-token base units; prices are quote-token base units per
-/// lot. Every winner pays the clearing price. Pro-rata dust at the clearing step stays unsold and
-/// returns to the authority. See docs/superpowers/specs/2026-10-13-blindlaunch-v2-design.md.
+/// lot. Every winner pays the clearing price. At a pro-rata clearing step the shares use
+/// cumulative rounding in opening order, so exactly the remaining supply is sold.
+///
+/// `settle` makes no external calls, so no token or seeder can block settlement. Payouts are
+/// split per token so a misbehaving sale token cannot hold back a quote refund.
+/// See docs/superpowers/specs/2026-10-13-blindlaunch-v2-design.md.
 contract BlindAuctionV2 {
     uint32 public constant MAX_STEPS = 64;
     uint32 public constant MAX_BIDS = 65_535;
-    uint32 public constant TALLY_IN_SETTLE = 256;
-    uint256 public constant SEED_GAS_FLOOR = 1_500_000;
     uint64 public constant MIN_COMMIT = 60;
     uint64 public constant MAX_COMMIT = 30 days;
     uint64 public constant MIN_CANCEL_GAP = 10 minutes;
     uint64 public constant MAX_CANCEL_GAP = 30 days;
     uint256 public constant MAX_AMOUNT = type(uint128).max;
     uint256 public constant MAX_LOTS = type(uint96).max;
+    address public constant FORFEIT_SINK = 0x000000000000000000000000000000000000dEaD;
     uint256 internal constant BID_LIMIT = 1 << 232;
 
     enum Status {
@@ -38,6 +46,13 @@ contract BlindAuctionV2 {
         Open,
         Settled,
         Cancelled
+    }
+
+    enum SeedState {
+        None,
+        Reserved,
+        HandedOff,
+        Released
     }
 
     struct CreateParams {
@@ -82,19 +97,20 @@ contract BlindAuctionV2 {
         uint8 publishedCount;
         uint8 pairA;
         uint8 pairB;
-        bool finalized;
-        bool reclaimed;
         uint32 clearingStep;
         uint256 clearingPrice;
         uint256 aboveTotal;
         uint256 remaining;
         uint256 atDemand;
-        uint32 tallyCursor;
-        uint256 tallySum;
         uint256 totalSold;
+        uint256 forfeitedTotal;
+        bool forfeitsBurned;
+        bool unsoldReclaimed;
+        bool proceedsReclaimed;
         uint96 seedSaleLots;
         uint16 seedQuoteBps;
         uint64 seedLockUntil;
+        SeedState seedState;
         uint256 seedSale;
         uint256 seedQuote;
     }
@@ -103,9 +119,13 @@ contract BlindAuctionV2 {
         address bidder;
         bool opened;
         bool counted;
-        bool claimed;
+        bool forfeited;
+        bool refundClaimed;
+        bool tokensClaimed;
         uint8 step;
         uint96 quantity;
+        /// @dev Counted demand at the same step opened before this bid; drives cumulative rounding.
+        uint128 prefix;
         bytes32 h;
         Secp256k1.Point ephemeral;
         uint256[3] c;
@@ -142,14 +162,14 @@ contract BlindAuctionV2 {
     error BadShare();
     error LengthMismatch();
     error BidsUnopened();
-    error NothingToTally();
-    error InsufficientGas();
     error BadStatus();
-    error NotFinalized();
     error UnknownBidder();
     error AlreadyClaimed();
     error NotAuthority();
     error AlreadyReclaimed();
+    error NothingToBurn();
+    error NoSeed();
+    error AllowanceLeft();
     error TransferFailed();
     error Reentrancy();
 
@@ -167,15 +187,24 @@ contract BlindAuctionV2 {
     event BidCommitted(uint256 indexed auctionId, uint32 slot, address indexed bidder);
     event KeyPublished(uint256 indexed auctionId, uint8 keeper);
     event BidOpened(
-        uint256 indexed auctionId, uint32 slot, address indexed bidder, uint8 step, uint96 quantity, bool counted
+        uint256 indexed auctionId,
+        uint32 slot,
+        address indexed bidder,
+        uint8 step,
+        uint96 quantity,
+        bool counted,
+        bool forfeited
     );
-    event AuctionSettled(uint256 indexed auctionId, uint32 clearingStep, uint256 clearingPrice);
-    event AuctionFinalized(uint256 indexed auctionId, uint256 totalSold);
+    event AuctionSettled(uint256 indexed auctionId, uint32 clearingStep, uint256 clearingPrice, uint256 totalSold);
     event AuctionCancelled(uint256 indexed auctionId);
-    event BidClaimed(uint256 indexed auctionId, address indexed bidder, address to, uint256 saleOut, uint256 quoteOut);
-    event ProceedsReclaimed(uint256 indexed auctionId, address to, uint256 saleOut, uint256 quoteOut);
-    event SeedRequested(uint256 indexed auctionId, uint256 saleAmount, uint256 quoteAmount);
-    event SeedFailed(uint256 indexed auctionId);
+    event RefundClaimed(uint256 indexed auctionId, address indexed bidder, address to, uint256 amount);
+    event TokensClaimed(uint256 indexed auctionId, address indexed bidder, address to, uint256 amount);
+    event UnsoldReclaimed(uint256 indexed auctionId, address to, uint256 amount);
+    event ProceedsReclaimed(uint256 indexed auctionId, address to, uint256 amount);
+    event ForfeitsBurned(uint256 indexed auctionId, uint256 amount);
+    event SeedReserved(uint256 indexed auctionId, uint256 saleAmount, uint256 quoteAmount);
+    event SeedHandedOff(uint256 indexed auctionId);
+    event SeedReleased(uint256 indexed auctionId);
 
     KeeperRegistry public immutable registry;
     address public immutable deployer;
@@ -189,7 +218,6 @@ contract BlindAuctionV2 {
     mapping(uint256 => Secp256k1.Point[3]) internal _keeperKeys;
     mapping(uint256 => uint256[3]) internal _publishedKeys;
     mapping(uint256 => uint256[64]) internal _qtyAtStep;
-    mapping(uint256 => mapping(uint32 => uint32[])) internal _slotsAtStep;
     mapping(uint256 => bytes) internal _kuruParams;
 
     modifier nonReentrant() {
@@ -403,15 +431,24 @@ contract BlindAuctionV2 {
         uint256 m = _decrypt(auctionId, a, b, sharedA, sharedB);
         b.opened = true;
         a.openedCount += 1;
-        (bool counted, uint8 step, uint96 quantity) = _parse(a, auctionId, b.bidder, b.h, m);
+
+        if (_commitment(auctionId, b.bidder, m) != b.h) {
+            b.forfeited = true;
+            a.forfeitedTotal += a.deposit;
+            emit BidOpened(auctionId, slot, b.bidder, 0, 0, false, true);
+            return;
+        }
+
+        (bool counted, uint8 step, uint96 quantity) = _parse(a, m);
         if (counted) {
+            uint256[64] storage demand = _qtyAtStep[auctionId];
             b.counted = true;
             b.step = step;
             b.quantity = quantity;
-            _qtyAtStep[auctionId][step] += quantity;
-            _slotsAtStep[auctionId][step].push(slot);
+            b.prefix = uint128(demand[step]);
+            demand[step] += quantity;
         }
-        emit BidOpened(auctionId, slot, b.bidder, step, quantity, counted);
+        emit BidOpened(auctionId, slot, b.bidder, step, quantity, counted, false);
     }
 
     function _decrypt(
@@ -431,13 +468,9 @@ contract BlindAuctionV2 {
         return Secp256k1.reconstruct(pa, pb, ya, yb);
     }
 
-    /// @dev Never reverts: an unusable bid is simply not counted and is refunded at claim.
-    function _parse(Auction storage a, uint256 auctionId, address bidder, bytes32 h, uint256 m)
-        private
-        view
-        returns (bool counted, uint8 step, uint96 quantity)
-    {
-        if (keccak256(abi.encode(auctionId, bidder, m)) != h || m >= BID_LIMIT) return (false, 0, 0);
+    /// @dev Called only after the commitment matched. Never reverts: an unusable bid is refunded.
+    function _parse(Auction storage a, uint256 m) private view returns (bool counted, uint8 step, uint96 quantity) {
+        if (m >= BID_LIMIT) return (false, 0, 0);
         step = uint8(m >> 224);
         quantity = uint96(m >> 128);
         if (step >= a.stepCount || quantity == 0) return (false, step, quantity);
@@ -447,15 +480,8 @@ contract BlindAuctionV2 {
 
     // ------------------------------------------------------------------ settle
 
-    function cancel(uint256 auctionId) external nonReentrant {
-        Auction storage a = _requireAuction(auctionId);
-        if (a.status != Status.Open) revert NotOpen();
-        if (block.timestamp < a.cancelAfter) revert TooEarly();
-        if (a.publishedCount >= 2) revert KeysComplete();
-        a.status = Status.Cancelled;
-        emit AuctionCancelled(auctionId);
-    }
-
+    /// @notice Computes the clearing price and reserves the seed. Reads storage only: no token,
+    ///         seeder or other external call can make it revert.
     function settle(uint256 auctionId) external nonReentrant {
         Auction storage a = _requireAuction(auctionId);
         if (a.status != Status.Open) revert NotOpen();
@@ -488,103 +514,97 @@ contract BlindAuctionV2 {
             above -= atDemand;
         }
 
+        uint256 remaining = supplyLots - above;
         a.status = Status.Settled;
         a.clearingStep = clearing;
         a.clearingPrice = above + atDemand == 0 ? 0 : _price(a, clearing);
         a.aboveTotal = above;
-        a.remaining = supplyLots - above;
+        a.remaining = remaining;
         a.atDemand = atDemand;
-        emit AuctionSettled(auctionId, clearing, a.clearingPrice);
-
-        if (atDemand <= a.remaining) {
-            a.totalSold = above + atDemand;
-            _finalize(auctionId, a);
-        } else {
-            _tally(auctionId, a, TALLY_IN_SETTLE);
-        }
+        a.totalSold = above + (atDemand < remaining ? atDemand : remaining);
+        emit AuctionSettled(auctionId, clearing, a.clearingPrice, a.totalSold);
+        _reserveSeed(auctionId, a);
     }
 
-    /// @notice Continues the pro-rata total for large clearing steps. Anyone may call it.
-    function tally(uint256 auctionId, uint32 maxCount) external nonReentrant {
+    function cancel(uint256 auctionId) external nonReentrant {
         Auction storage a = _requireAuction(auctionId);
-        if (a.status != Status.Settled || a.finalized) revert NothingToTally();
-        _tally(auctionId, a, maxCount);
+        if (a.status != Status.Open) revert NotOpen();
+        if (block.timestamp < a.cancelAfter) revert TooEarly();
+        if (a.publishedCount >= 2) revert KeysComplete();
+        a.status = Status.Cancelled;
+        emit AuctionCancelled(auctionId);
     }
 
-    function _tally(uint256 auctionId, Auction storage a, uint256 maxCount) private {
-        uint32[] storage slots = _slotsAtStep[auctionId][a.clearingStep];
-        uint256 length = slots.length;
-        uint256 cursor = a.tallyCursor;
-        uint256 end = cursor + maxCount < length ? cursor + maxCount : length;
-        uint256 sum = a.tallySum;
-        uint256 remaining = a.remaining;
-        uint256 atDemand = a.atDemand;
-        for (; cursor < end; ++cursor) {
-            sum += (remaining * _bids[auctionId][slots[cursor]].quantity) / atDemand;
-        }
-        a.tallyCursor = uint32(cursor);
-        a.tallySum = sum;
-        if (cursor == length) {
-            a.totalSold = a.aboveTotal + sum;
-            _finalize(auctionId, a);
-        }
+    /// @notice Sends every forfeited deposit to `FORFEIT_SINK`. Anyone may call it.
+    function burnForfeits(uint256 auctionId) external nonReentrant {
+        Auction storage a = _requireAuction(auctionId);
+        if (a.status != Status.Settled || a.forfeitedTotal == 0 || a.forfeitsBurned) revert NothingToBurn();
+        a.forfeitsBurned = true;
+        _push(a.quoteToken, FORFEIT_SINK, a.forfeitedTotal);
+        emit ForfeitsBurned(auctionId, a.forfeitedTotal);
     }
 
-    function _finalize(uint256 auctionId, Auction storage a) private {
-        a.finalized = true;
-        emit AuctionFinalized(auctionId, a.totalSold);
-        _handOffSeed(auctionId, a);
-    }
+    // ------------------------------------------------------------------ seed
 
-    /// @dev Never lets a seeder failure block settlement: approve exact amounts, let the
-    ///      seeder pull them in `accept` (rolled back if it reverts), then try `seed`.
-    function _handOffSeed(uint256 auctionId, Auction storage a) private {
+    function _reserveSeed(uint256 auctionId, Auction storage a) private {
         if (a.totalSold == 0) return;
         uint256 unsoldLots = a.supplyLots - a.totalSold;
         uint256 saleAmount = (a.seedSaleLots < unsoldLots ? a.seedSaleLots : unsoldLots) * a.lotSize;
         uint256 quoteAmount = (a.clearingPrice * a.totalSold * a.seedQuoteBps) / 10_000;
         if (saleAmount == 0 && quoteAmount == 0) return;
-        if (gasleft() < SEED_GAS_FLOOR) revert InsufficientGas();
+        a.seedState = SeedState.Reserved;
+        a.seedSale = saleAmount;
+        a.seedQuote = quoteAmount;
+        emit SeedReserved(auctionId, saleAmount, quoteAmount);
+    }
+
+    /// @notice Hands the reserved seed to the seeder and tries to open the market. Anyone may call
+    ///         it; a failure reverts and can be retried, or the seed released after the lock.
+    function handOffSeed(uint256 auctionId) external nonReentrant {
+        Auction storage a = _requireAuction(auctionId);
+        if (a.seedState != SeedState.Reserved) revert NoSeed();
+        a.seedState = SeedState.HandedOff;
 
         IMarketSeeder target = seeder;
-        uint256 saleBefore = a.saleToken.balanceOf(address(this));
-        uint256 quoteBefore = a.quoteToken.balanceOf(address(this));
-        bool accepted;
-        if (
-            _tryApprove(a.saleToken, address(target), saleAmount)
-                && _tryApprove(a.quoteToken, address(target), quoteAmount)
-        ) {
-            try target.accept(_seedOrder(auctionId, a, saleAmount, quoteAmount)) {
-                accepted = true;
-            } catch {}
-        }
-        _tryApprove(a.saleToken, address(target), 0);
-        _tryApprove(a.quoteToken, address(target), 0);
-        if (!accepted) {
-            emit SeedFailed(auctionId);
-            return;
-        }
+        IERC20 saleToken = a.saleToken;
+        IERC20 quoteToken = a.quoteToken;
+        uint256 saleBefore = saleToken.balanceOf(address(this));
+        uint256 quoteBefore = quoteToken.balanceOf(address(this));
+        _call(address(saleToken), abi.encodeCall(IERC20.approve, (address(target), a.seedSale)));
+        _call(address(quoteToken), abi.encodeCall(IERC20.approve, (address(target), a.seedQuote)));
+        target.accept(_seedOrder(auctionId, a));
 
-        uint256 saleAfter = a.saleToken.balanceOf(address(this));
-        uint256 quoteAfter = a.quoteToken.balanceOf(address(this));
-        a.seedSale = saleBefore > saleAfter ? saleBefore - saleAfter : 0;
-        a.seedQuote = quoteBefore > quoteAfter ? quoteBefore - quoteAfter : 0;
-        emit SeedRequested(auctionId, a.seedSale, a.seedQuote);
+        if (
+            saleBefore - saleToken.balanceOf(address(this)) != a.seedSale
+                || quoteBefore - quoteToken.balanceOf(address(this)) != a.seedQuote
+        ) revert TransferFailed();
+        if (
+            saleToken.allowance(address(this), address(target)) != 0
+                || quoteToken.allowance(address(this), address(target)) != 0
+        ) revert AllowanceLeft();
+        emit SeedHandedOff(auctionId);
         try target.seed(auctionId) {} catch {}
     }
 
-    function _seedOrder(uint256 auctionId, Auction storage a, uint256 saleAmount, uint256 quoteAmount)
-        private
-        view
-        returns (IMarketSeeder.SeedOrder memory)
-    {
+    /// @notice Returns a seed that was never handed off to the authority once the lock has passed.
+    function releaseSeed(uint256 auctionId) external nonReentrant {
+        Auction storage a = _requireAuction(auctionId);
+        if (a.seedState != SeedState.Reserved) revert NoSeed();
+        if (block.timestamp < a.seedLockUntil) revert TooEarly();
+        a.seedState = SeedState.Released;
+        _push(a.saleToken, a.authority, a.seedSale);
+        _push(a.quoteToken, a.authority, a.seedQuote);
+        emit SeedReleased(auctionId);
+    }
+
+    function _seedOrder(uint256 auctionId, Auction storage a) private view returns (IMarketSeeder.SeedOrder memory) {
         return IMarketSeeder.SeedOrder({
             auctionId: auctionId,
             authority: a.authority,
             saleToken: address(a.saleToken),
             quoteToken: address(a.quoteToken),
-            saleAmount: saleAmount,
-            quoteAmount: quoteAmount,
+            saleAmount: a.seedSale,
+            quoteAmount: a.seedQuote,
             clearingPrice: a.clearingPrice,
             lotSize: a.lotSize,
             lockUntil: a.seedLockUntil,
@@ -594,48 +614,91 @@ contract BlindAuctionV2 {
 
     // ------------------------------------------------------------------ claims
 
-    function claim(uint256 auctionId) external {
-        claimTo(auctionId, msg.sender);
-    }
-
-    /// @notice Pays the caller's allocation and refund to `to`, for example when the caller's
-    ///         own address is blocked by one of the tokens.
-    function claimTo(uint256 auctionId, address to) public nonReentrant {
-        if (to == address(0)) revert ZeroAddress();
+    /// @notice Pays whichever of the caller's refund and tokens are still unclaimed.
+    function claim(uint256 auctionId) external nonReentrant {
         Auction storage a = _requireAuction(auctionId);
         Bid storage b = _bidderBid(auctionId, msg.sender);
-        if (b.claimed) revert AlreadyClaimed();
-        (uint256 saleOut, uint256 quoteOut) = _claimable(a, b);
-        b.claimed = true;
-        _push(a.saleToken, to, saleOut);
-        _push(a.quoteToken, to, quoteOut);
-        emit BidClaimed(auctionId, msg.sender, to, saleOut, quoteOut);
+        if (b.refundClaimed && b.tokensClaimed) revert AlreadyClaimed();
+        if (!b.refundClaimed) _claimRefund(auctionId, a, b, msg.sender);
+        if (!b.tokensClaimed) _claimTokens(auctionId, a, b, msg.sender);
     }
 
-    function reclaim(uint256 auctionId) external {
-        reclaimTo(auctionId, msg.sender);
-    }
-
-    function reclaimTo(uint256 auctionId, address to) public nonReentrant {
-        if (to == address(0)) revert ZeroAddress();
+    /// @notice Pays only the quote refund, so a blocked sale token cannot hold it back.
+    function claimRefund(uint256 auctionId, address to) external nonReentrant {
         Auction storage a = _requireAuction(auctionId);
-        if (msg.sender != a.authority) revert NotAuthority();
-        if (a.reclaimed) revert AlreadyReclaimed();
-        uint256 saleOut;
-        uint256 quoteOut;
+        Bid storage b = _bidderBid(auctionId, msg.sender);
+        if (b.refundClaimed) revert AlreadyClaimed();
+        _claimRefund(auctionId, a, b, to);
+    }
+
+    function claimTokens(uint256 auctionId, address to) external nonReentrant {
+        Auction storage a = _requireAuction(auctionId);
+        Bid storage b = _bidderBid(auctionId, msg.sender);
+        if (b.tokensClaimed) revert AlreadyClaimed();
+        _claimTokens(auctionId, a, b, to);
+    }
+
+    function reclaim(uint256 auctionId) external nonReentrant {
+        Auction storage a = _authorityOf(auctionId);
+        if (a.unsoldReclaimed && a.proceedsReclaimed) revert AlreadyReclaimed();
+        if (!a.unsoldReclaimed) _reclaimUnsold(auctionId, a, msg.sender);
+        if (!a.proceedsReclaimed) _reclaimProceeds(auctionId, a, msg.sender);
+    }
+
+    function reclaimUnsold(uint256 auctionId, address to) external nonReentrant {
+        Auction storage a = _authorityOf(auctionId);
+        if (a.unsoldReclaimed) revert AlreadyReclaimed();
+        _reclaimUnsold(auctionId, a, to);
+    }
+
+    function reclaimProceeds(uint256 auctionId, address to) external nonReentrant {
+        Auction storage a = _authorityOf(auctionId);
+        if (a.proceedsReclaimed) revert AlreadyReclaimed();
+        _reclaimProceeds(auctionId, a, to);
+    }
+
+    function _claimRefund(uint256 auctionId, Auction storage a, Bid storage b, address to) private {
+        if (to == address(0)) revert ZeroAddress();
+        uint256 amount = _refundOf(a, b);
+        b.refundClaimed = true;
+        _push(a.quoteToken, to, amount);
+        emit RefundClaimed(auctionId, b.bidder, to, amount);
+    }
+
+    function _claimTokens(uint256 auctionId, Auction storage a, Bid storage b, address to) private {
+        if (to == address(0)) revert ZeroAddress();
+        uint256 amount = _tokensOf(a, b);
+        b.tokensClaimed = true;
+        _push(a.saleToken, to, amount);
+        emit TokensClaimed(auctionId, b.bidder, to, amount);
+    }
+
+    function _reclaimUnsold(uint256 auctionId, Auction storage a, address to) private {
+        if (to == address(0)) revert ZeroAddress();
+        uint256 amount;
         if (a.status == Status.Cancelled) {
-            saleOut = a.supply;
+            amount = a.supply;
         } else if (a.status == Status.Settled) {
-            if (!a.finalized) revert NotFinalized();
-            saleOut = (a.supplyLots - a.totalSold) * a.lotSize - a.seedSale;
-            quoteOut = a.clearingPrice * a.totalSold - a.seedQuote;
+            amount = (a.supplyLots - a.totalSold) * a.lotSize - a.seedSale;
         } else {
             revert BadStatus();
         }
-        a.reclaimed = true;
-        _push(a.saleToken, to, saleOut);
-        _push(a.quoteToken, to, quoteOut);
-        emit ProceedsReclaimed(auctionId, to, saleOut, quoteOut);
+        a.unsoldReclaimed = true;
+        _push(a.saleToken, to, amount);
+        emit UnsoldReclaimed(auctionId, to, amount);
+    }
+
+    function _reclaimProceeds(uint256 auctionId, Auction storage a, address to) private {
+        if (to == address(0)) revert ZeroAddress();
+        uint256 amount;
+        if (a.status == Status.Settled) {
+            amount = a.clearingPrice * a.totalSold - a.seedQuote;
+        } else if (a.status != Status.Cancelled) {
+            revert BadStatus();
+        }
+        a.proceedsReclaimed = true;
+        _push(a.quoteToken, to, amount);
+        emit ProceedsReclaimed(auctionId, to, amount);
     }
 
     // ------------------------------------------------------------------ views
@@ -652,12 +715,6 @@ contract BlindAuctionV2 {
         return _keeperKeys[auctionId];
     }
 
-    function quotePrice(uint256 auctionId, uint32 step) external view returns (uint256) {
-        Auction storage a = _requireAuction(auctionId);
-        if (step >= a.stepCount) revert BadGrid();
-        return _price(a, step);
-    }
-
     function publishedKeysOf(uint256 auctionId) external view returns (uint256[3] memory) {
         return _publishedKeys[auctionId];
     }
@@ -666,12 +723,19 @@ contract BlindAuctionV2 {
         return _qtyAtStep[auctionId];
     }
 
-    function slotsAtStepLength(uint256 auctionId, uint32 step) external view returns (uint256) {
-        return _slotsAtStep[auctionId][step].length;
+    function kuruParamsOf(uint256 auctionId) external view returns (bytes memory) {
+        return _kuruParams[auctionId];
     }
 
-    function hashBid(uint256 auctionId, address bidder, uint256 m) external pure returns (bytes32) {
-        return keccak256(abi.encode(auctionId, bidder, m));
+    /// @notice The commitment `h` a bidder must submit for bid `m`.
+    function hashBid(uint256 auctionId, address bidder, uint256 m) external view returns (bytes32) {
+        return _commitment(auctionId, bidder, m);
+    }
+
+    function quotePrice(uint256 auctionId, uint32 step) external view returns (uint256) {
+        Auction storage a = _requireAuction(auctionId);
+        if (step >= a.stepCount) revert BadGrid();
+        return _price(a, step);
     }
 
     function canSettle(uint256 auctionId) external view returns (bool) {
@@ -690,23 +754,60 @@ contract BlindAuctionV2 {
         return _allocation(a, _bidderBid(auctionId, bidder));
     }
 
+    /// @notice What the bidder can still claim: sale tokens and quote refund. Claimed legs read 0.
     function claimable(uint256 auctionId, address bidder) external view returns (uint256 saleOut, uint256 quoteOut) {
-        return _claimable(_requireAuction(auctionId), _bidderBid(auctionId, bidder));
-    }
-
-    function kuruParamsOf(uint256 auctionId) external view returns (bytes memory) {
-        return _kuruParams[auctionId];
+        Auction storage a = _requireAuction(auctionId);
+        Bid storage b = _bidderBid(auctionId, bidder);
+        if (!b.tokensClaimed) saleOut = _tokensOf(a, b);
+        if (!b.refundClaimed) quoteOut = _refundOf(a, b);
     }
 
     // ------------------------------------------------------------------ internals
+
+    function _commitment(uint256 auctionId, address bidder, uint256 m) private view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, address(this), auctionId, bidder, m));
+    }
 
     function _requireAuction(uint256 auctionId) private view returns (Auction storage a) {
         a = _auctions[auctionId];
         if (a.status == Status.None) revert MissingAuction();
     }
 
+    function _authorityOf(uint256 auctionId) private view returns (Auction storage a) {
+        a = _requireAuction(auctionId);
+        if (msg.sender != a.authority) revert NotAuthority();
+    }
+
+    function _bidderBid(uint256 auctionId, address bidder) private view returns (Bid storage) {
+        uint32 slotPlusOne = bidderSlot[auctionId][bidder];
+        if (slotPlusOne == 0) revert UnknownBidder();
+        return _bids[auctionId][slotPlusOne - 1];
+    }
+
     function _price(Auction storage a, uint256 step) private view returns (uint256) {
         return a.minPrice + step * a.stepSize;
+    }
+
+    /// @dev At a pro-rata step: floor(rem·(prefix+q)/D) − floor(rem·prefix/D). The shares of all
+    ///      bids at the step telescope to exactly `remaining`, and each is at most q because rem < D.
+    function _allocation(Auction storage a, Bid storage b) private view returns (uint256) {
+        if (!b.counted || b.step < a.clearingStep) return 0;
+        if (b.step > a.clearingStep || a.atDemand <= a.remaining) return b.quantity;
+        uint256 prefix = b.prefix;
+        return (a.remaining * (prefix + b.quantity)) / a.atDemand - (a.remaining * prefix) / a.atDemand;
+    }
+
+    function _refundOf(Auction storage a, Bid storage b) private view returns (uint256) {
+        if (a.status == Status.Cancelled) return a.deposit;
+        if (a.status != Status.Settled) revert BadStatus();
+        if (b.forfeited) return 0;
+        return a.deposit - a.clearingPrice * _allocation(a, b);
+    }
+
+    function _tokensOf(Auction storage a, Bid storage b) private view returns (uint256) {
+        if (a.status == Status.Cancelled) return 0;
+        if (a.status != Status.Settled) revert BadStatus();
+        return _allocation(a, b) * a.lotSize;
     }
 
     function _pull(IERC20 token, address from, uint256 amount) private {
@@ -726,31 +827,5 @@ contract BlindAuctionV2 {
         (bool ok, bytes memory returned) = token.call(data);
         if (!ok) revert TransferFailed();
         if (returned.length > 0 && !abi.decode(returned, (bool))) revert TransferFailed();
-    }
-
-    function _allocation(Auction storage a, Bid storage b) private view returns (uint256) {
-        if (!b.counted || b.step < a.clearingStep) return 0;
-        if (b.step > a.clearingStep || a.atDemand <= a.remaining) return b.quantity;
-        return (a.remaining * b.quantity) / a.atDemand;
-    }
-
-    function _bidderBid(uint256 auctionId, address bidder) private view returns (Bid storage) {
-        uint32 slotPlusOne = bidderSlot[auctionId][bidder];
-        if (slotPlusOne == 0) revert UnknownBidder();
-        return _bids[auctionId][slotPlusOne - 1];
-    }
-
-    function _claimable(Auction storage a, Bid storage b) private view returns (uint256 saleOut, uint256 quoteOut) {
-        if (a.status == Status.Cancelled) return (0, a.deposit);
-        if (a.status != Status.Settled) revert BadStatus();
-        uint256 lots = _allocation(a, b);
-        return (lots * a.lotSize, a.deposit - a.clearingPrice * lots);
-    }
-
-    function _tryApprove(IERC20 token, address spender, uint256 amount) private returns (bool) {
-        (bool ok, bytes memory returned) =
-            address(token).call(abi.encodeCall(IERC20.approve, (spender, amount)));
-        if (!ok) return false;
-        return returned.length == 0 || (returned.length >= 32 && abi.decode(returned, (uint256)) != 0);
     }
 }

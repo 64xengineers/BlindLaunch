@@ -37,6 +37,14 @@ contract Secp256k1Test is Test {
         assertFalse(lib.isValid(Secp256k1.Point(g.x, Secp256k1.P)));
     }
 
+    function test_rejectsOnCurvePointWithXAtOrAboveN() public view {
+        uint256 x = N;
+        uint256 y = 0x98f66641cb0ae1776b463ebdee3d77fe2658f021db48e2c8ac7ab4c92f83621e;
+        uint256 p = Secp256k1.P;
+        assertEq(mulmod(y, y, p), addmod(mulmod(mulmod(x, x, p), x, p), 7, p), "point is on the curve");
+        assertFalse(lib.isValid(Secp256k1.Point(x, y)), "but ecrecover cannot take x >= n");
+    }
+
     function testFuzz_mulEqualsOnGenerator(uint256 k) public {
         k = bound(k, 1, N - 1);
         assertTrue(lib.mulEquals(Secp256k1.generator(), k, _pub(k)));

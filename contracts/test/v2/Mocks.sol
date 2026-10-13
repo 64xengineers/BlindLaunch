@@ -153,3 +153,50 @@ contract ClearingHarness {
         allocated = bids;
     }
 }
+
+/// @dev ERC-20 whose owner can make `balanceOf` revert or pause transfers, standing in for an
+///      upgradeable or pausable token controlled by the auction authority.
+contract HostileToken {
+    uint8 public constant decimals = 0;
+    mapping(address => uint256) internal _balances;
+    mapping(address => mapping(address => uint256)) public allowance;
+    bool public breakBalanceOf;
+    bool public paused;
+
+    function setBreakBalanceOf(bool value) external {
+        breakBalanceOf = value;
+    }
+
+    function setPaused(bool value) external {
+        paused = value;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _balances[to] += amount;
+    }
+
+    function balanceOf(address account) external view returns (uint256) {
+        require(!breakBalanceOf, "balanceOf");
+        return _balances[account];
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        require(!paused, "paused");
+        _balances[msg.sender] -= amount;
+        _balances[to] += amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(!paused, "paused");
+        allowance[from][msg.sender] -= amount;
+        _balances[from] -= amount;
+        _balances[to] += amount;
+        return true;
+    }
+}
