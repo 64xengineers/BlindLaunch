@@ -5,7 +5,9 @@
   "packageManager": "pnpm@10.18.0",
   "scripts": {
     "dev": "pnpm --filter @blindlaunch/web dev",
-    "build": "pnpm --filter @blindlaunch/web build"
+    "build": "pnpm --filter @blindlaunch/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
   },
   "engines": {
     "node": ">=22"
