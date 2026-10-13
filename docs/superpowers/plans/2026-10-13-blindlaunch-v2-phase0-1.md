@@ -4417,11 +4417,15 @@ contract SeedTest is V2Base {
     }
 
     /// Undersubscribed: sold 150 at 50, unsold 850, seed 100 sale and 20% of 7,500 = 1,500 quote.
-    function _settleUndersubscribed() internal returns (uint256 id) {
+    function _prepareUndersubscribed() internal returns (uint256 id) {
         id = _create(_seededParams());
         _bid(id, alice, 5, 100);
         _bid(id, bob, 0, 50);
         _closeAndOpenAll(id);
+    }
+
+    function _settleUndersubscribed() internal returns (uint256 id) {
+        id = _prepareUndersubscribed();
         auction.settle(id);
     }
 
@@ -4468,9 +4472,10 @@ contract SeedTest is V2Base {
     function test_handOffMovesExactAmountsAndReclaimExcludesThem() public {
         MockSeeder seeder = new MockSeeder();
         _withSeeder(seeder);
+        uint256 id = _prepareUndersubscribed();
         vm.expectEmit(address(auction));
-        emit SeedRequested(1, 100, 1_500);
-        uint256 id = _settleUndersubscribed();
+        emit SeedRequested(id, 100, 1_500);
+        auction.settle(id);
 
         assertEq(sale.balanceOf(address(seeder)), 100);
         assertEq(quote.balanceOf(address(seeder)), 1_500);
@@ -4496,9 +4501,10 @@ contract SeedTest is V2Base {
 
     function test_acceptRevertLeavesFundsWithAuthority() public {
         _withSeeder(new RevertingAcceptSeeder());
+        uint256 id = _prepareUndersubscribed();
         vm.expectEmit(address(auction));
-        emit SeedFailed(1);
-        uint256 id = _settleUndersubscribed();
+        emit SeedFailed(id);
+        auction.settle(id);
         assertEq(auction.getAuction(id).seedSale, 0);
         vm.prank(authority);
         auction.reclaim(id);
@@ -4517,9 +4523,10 @@ contract SeedTest is V2Base {
 
     function test_seederCannotPullMoreThanApproved() public {
         _withSeeder(new GreedySeeder());
+        uint256 id = _prepareUndersubscribed();
         vm.expectEmit(address(auction));
-        emit SeedFailed(1);
-        _settleUndersubscribed();
+        emit SeedFailed(id);
+        auction.settle(id);
     }
 
     function test_lowGasSettleCannotSkipTheHandOff() public {
