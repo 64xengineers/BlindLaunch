@@ -5,8 +5,27 @@ import { CopyButton, GlassCard, SecondaryButton, formatLeft } from "../component
 
 export function BidSealed() {
   const { id } = useParams();
-  const { selected, quantity, quotedPrice, myBid, now } = useAuction();
+  const { selected, quantity, quotedPrice, myBid, now, recoveryCode, account } = useAuction();
   const deposit = selected?.deposit.toString() ?? "—";
+
+  function download() {
+    const text = [
+      "Blindlaunch bid recovery",
+      `Auction: ${id}`,
+      `Wallet: ${account ?? ""}`,
+      `Tokens bid: ${quantity}`,
+      `Recovery code: ${recoveryCode}`,
+      "",
+      "To reveal from another browser: open the auction, connect this wallet, enter the token amount and this code, then sign.",
+      "Keep this file private.",
+    ].join("\n");
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `blindlaunch-auction-${id}-recovery.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <div className="mx-auto max-w-xl px-4 pb-20 text-center">
@@ -40,7 +59,19 @@ export function BidSealed() {
             </p>
           </div>
         ) : null}
-        <p className="mt-4 rounded-xl border border-amber/30 bg-amber/10 p-3 text-sm text-paper">Your secret salt comes from a free wallet signature, so this wallet can recover it on any device. Note the number of tokens you bid in case you reveal from another browser.</p>
+        {recoveryCode ? (
+          <div className="mt-4 rounded-xl border border-amber/30 bg-amber/10 p-3 text-sm text-paper">
+            <p className="font-semibold">Save your recovery code</p>
+            <p className="mt-1 text-mist">To reveal from another browser you need this wallet, this code and the number of tokens you bid. Keep the code private. On its own it cannot open your bid.</p>
+            <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-ink/60 px-3">
+              <span className="min-w-0 truncate font-mono text-xs text-paper">{recoveryCode}</span>
+              <CopyButton value={recoveryCode} />
+            </div>
+            <button type="button" className="mt-2 min-h-11 text-sm text-amber underline-offset-4 hover:underline" onClick={download}>Download as a text file</button>
+          </div>
+        ) : (
+          <p className="mt-4 rounded-xl border border-amber/30 bg-amber/10 p-3 text-sm text-paper">You used a custom salt. It is stored only in this browser, so reveal from here.</p>
+        )}
       </GlassCard>
 
       <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
