@@ -4,7 +4,9 @@ import { useSession } from "./auth/session";
 import { network } from "./chain/config";
 import { shortAddress } from "./chain/format";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { Background, Footer, Navbar, Toast } from "./components/ui";
+import { ArtDefs, World } from "./components/art";
+import { LiveTicker } from "./components/ticker";
+import { Footer, Navbar, Toast } from "./components/ui";
 import { useBalance, WalletPicker } from "./components/wallet";
 import { useToast } from "./state/hooks";
 import { AuctionPage } from "./screens/AuctionPage";
@@ -34,14 +36,16 @@ export function App() {
 
   return (
     <div className="relative isolate flex min-h-screen flex-col overflow-x-clip">
-      <Background />
+      <ArtDefs />
+      <World />
       <Navbar account={signer ? shortAddress(signer.address) : null} mon={balance} onConnect={() => setPicker(true)} />
+      <LiveTicker />
       {wrongChain ? (
-        <p className="relative z-20 mx-auto mb-4 max-w-6xl rounded-xl border border-amber/50 bg-amber/10 px-4 py-2 text-sm text-paper" role="alert">
+        <p className="relative z-20 mx-auto mt-4 max-w-[1360px] border-2 border-black bg-yellow px-4 py-2 font-semibold text-black" role="alert">
           Your wallet is on another network. It will be asked to switch to {network.label} before your next transaction.
         </p>
       ) : null}
-      <main className="relative z-10 flex-1">
+      <main className="relative z-10 flex-1 pt-8">
         <ErrorBoundary key={pathname}>
           <Routes>
             <Route path="/" element={<Home />} />

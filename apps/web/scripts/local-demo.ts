@@ -100,7 +100,7 @@ await callAuction(writer(accounts[9]!), "settle", settled);
 await openMarket(writer(accounts[9]!), settled);
 
 await enqueueKeys();
-const open = await launch("Nebula", "NEB", "60");
+const open = await launch("Nebula", "NEB", "1440");
 await bid(open, 5, 4, 120n);
 await bid(open, 8, 2, 80n);
 
