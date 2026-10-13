@@ -201,7 +201,7 @@ const visible = [
 ];
 const trusted = [
   "The BlindAuction contract. It is open source and tested, but not audited.",
-  "This browser, which stores the secret salt you need to reveal.",
+  "Your wallet, whose free signature recreates the secret salt you need to reveal.",
   "Monad testnet staying up through the reveal window.",
   "You, to come back and reveal before the deadline.",
 ];
@@ -249,7 +249,7 @@ export function RiskNotice() {
           <ul className="mt-3 grid gap-2 text-sm text-mist sm:grid-cols-2">
             <li>This is a hackathon build running on Monad testnet. Use test tokens only.</li>
             <li>The contract is not audited. Do not send real assets to it.</li>
-            <li>If you lose the browser data holding your salt, you cannot reveal. Your bid is then not filled, and the deposit comes back after settlement.</li>
+            <li>To reveal from another browser you need the same wallet and the number of tokens you bid. If you cannot reveal, your bid is not filled, and the deposit comes back after settlement.</li>
             <li>Bids are hidden only until reveal. Wallet addresses and deposits are always public.</li>
             <li>Nothing here is financial, legal or investment advice, or an offer to sell any asset.</li>
             <li>Software can have bugs. You use it at your own risk.</li>

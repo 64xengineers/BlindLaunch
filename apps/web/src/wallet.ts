@@ -45,6 +45,22 @@ export function randomSalt(): `0x${string}` {
   return `0x${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
+export function saltMessage(auctionId: bigint): string {
+  return [
+    "Blindlaunch bid secret",
+    `Auction: ${auctionId.toString()}`,
+    `Contract: ${auctionAddress}`,
+    `Chain: ${monadTestnet.id}`,
+    "",
+    "Signing is free and sends no transaction. The signature becomes the secret salt for your sealed bid, so this wallet can recover it on any device. Only sign this on Blindlaunch.",
+  ].join("\n");
+}
+
+export async function deriveSalt(account: Address, auctionId: bigint): Promise<`0x${string}`> {
+  const signature = await walletClient(account).signMessage({ account, message: saltMessage(auctionId) });
+  return keccak256(signature);
+}
+
 export function saltKey(auctionId: string, account: string): string {
   return `blindlaunch:salt:${auctionId}:${account.toLowerCase()}`;
 }

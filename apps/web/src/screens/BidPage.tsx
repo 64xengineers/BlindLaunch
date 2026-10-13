@@ -111,7 +111,7 @@ export function BidPage() {
             <>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-xl font-bold">Place a sealed bid</h2>
-                <span className="text-xs text-teal">Encrypted on your device</span>
+                <span className="text-xs text-teal">Sealed (hashed) on your device</span>
               </div>
               {mySlot !== 0 ? (
                 <p className="mt-4 rounded-xl border border-teal/40 bg-teal/10 p-3 text-sm text-paper">You already sealed a bid in this auction. Come back when the reveal window opens.</p>
@@ -151,7 +151,7 @@ export function BidPage() {
               <details className="mt-4 text-sm">
                 <summary className="min-h-11 cursor-pointer py-2 text-lilac hover:text-paper">Advanced: secret salt</summary>
                 <label className="grid gap-2 text-mist">
-                  Saved in this browser, needed to reveal
+                  Leave empty to derive it from a free wallet signature (recoverable on any device). A custom salt is stored only in this browser.
                   <input className="field font-mono text-xs" value={salt} onChange={(event) => setSalt(event.target.value)} />
                 </label>
               </details>
@@ -180,9 +180,15 @@ export function BidPage() {
                   <div className="flex justify-between"><dt className="text-lilac">Your slot</dt><dd className="font-mono text-paper">#{myBid.slot}</dd></div>
                   {storedBid ? (
                     <div className="flex justify-between"><dt className="text-lilac">Saved bid</dt><dd className="font-mono text-paper">{priceAt(selected, storedBid.step).toString()} × {storedBid.quantity}</dd></div>
-                  ) : (
-                    <p className="text-xs text-amber">No saved bid found in this browser, so the reveal may fail. Use the browser you sealed from.</p>
-                  )}
+                  ) : !myBid.revealed ? (
+                    <div className="grid gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                      <p className="text-xs text-lilac">No saved bid in this browser. Enter the number of tokens you bid. Your wallet signs the same free message as when you sealed, and the price is recovered from the on-chain commitment.</p>
+                      <label className="grid gap-1 text-xs text-mist">
+                        Tokens you bid
+                        <input className="field" inputMode="numeric" placeholder="Amount" value={quantity} onChange={(event) => setQuantity(event.target.value.replace(/[^\d]/g, ""))} />
+                      </label>
+                    </div>
+                  ) : null}
                   <div className="flex justify-between"><dt className="text-lilac">Status</dt><dd className={myBid.revealed ? "text-teal" : "text-amber"}>{myBid.revealed ? "Revealed" : "Waiting for reveal"}</dd></div>
                 </dl>
               ) : <p className="mt-4 text-sm text-lilac">{account ? "This wallet has no bid in this auction." : "Connect the wallet that placed the bid."}</p>}

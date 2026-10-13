@@ -46,7 +46,7 @@ export function Home() {
             Launches without the bot race.
           </h1>
           <p className="mt-5 max-w-md text-lg leading-relaxed text-mist">
-            Bid in secret. One price is chosen for everyone. Trading opens fair.
+            Bid in secret. One price is chosen for everyone. The launch opens at a fair price.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <a className="btn-primary inline-flex items-center justify-center no-underline" href="#auctions"><span className="relative z-10">Browse auctions</span></a>
