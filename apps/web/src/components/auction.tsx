@@ -1,9 +1,11 @@
 import type { Outcome } from "@blindlaunch/sealed-bid";
-import type { Address } from "viem";
+import { useEffect, useState } from "react";
+import { formatUnits, type Address } from "viem";
 import { explorerUrl, network } from "../chain/config";
 import { formatAmount, formatDate, formatLeft, shortAddress } from "../chain/format";
-import { formatPrice, lotLabel, priceAt, type AuctionView, type BidView, type Phase, type RawAuction } from "../chain/model";
-import { CopyButton, GlassCard, LockIcon, StepChart } from "./ui";
+import { priceAt, type AuctionView, type BidView, type Phase, type RawAuction, type TokenMeta } from "../chain/model";
+import { calm } from "../state/motion";
+import { CopyButton, Fold, Icon, Panel, Sticker, type StickerTone, type TrackerStage } from "./ui";
 
 /** The contract's outcome fields as the TypeScript allocation mirror expects them. */
 export function outcomeOf(a: RawAuction): Outcome {
@@ -18,157 +20,229 @@ export function outcomeOf(a: RawAuction): Outcome {
   };
 }
 
+/** One plain sentence for where a launch is. */
 export function phaseMessage(phase: Phase, a: AuctionView, now: bigint): string {
   const left = (target: bigint) => formatLeft(Number(target - now));
   switch (phase) {
     case "scheduled":
       return `Bidding opens in ${left(a.commitStart)}.`;
     case "bidding":
-      return `Bids are encrypted to three keepers. Bidding closes in ${left(a.commitDeadline)}.`;
+      return `Bids stay secret until the end. Bidding closes in ${left(a.commitDeadline)}.`;
     case "awaitingKeys":
-      return "Bidding closed. Keepers are publishing their keys, and every bid then opens on chain. Bidders have nothing to do.";
+      return "Bidding is closed. Every bid unlocks by itself. Bidders have nothing to do.";
     case "cancellable":
-      return "The keepers did not publish in time. Anyone can cancel, and every deposit is refunded.";
+      return "The bids could not unlock in time. Anyone can refund everyone, in full.";
     case "opening":
-      return "Keys are out. Bids are being opened on chain; anyone can help.";
+      return "Bids are unlocking. Anyone can press the button to speed it up.";
     case "ready":
-      return "Every bid is open. Anyone can settle now.";
+      return "Every bid is unlocked. Anyone can reveal the result now.";
     case "settled":
       return a.totalSold > 0n
-        ? `Cleared at ${formatPrice(a.clearingPrice, a, a.sale, a.quote)}. Winners claim tokens and refunds.`
-        : "No sale. Every deposit can be claimed back.";
+        ? `Final price ${priceText(a, a.clearingPrice)} for everyone. Winners can collect.`
+        : "Nothing was sold. Everyone can collect their money back.";
     case "cancelled":
-      return "Cancelled. Every deposit can be claimed back.";
+      return "Called off. Everyone can collect their money back.";
   }
 }
 
-const stages = ["Bidding", "Keys", "Opening", "Settled"] as const;
-const stageOf: Record<Phase, number> = { scheduled: 0, bidding: 0, awaitingKeys: 1, cancellable: 1, opening: 2, ready: 2, settled: 3, cancelled: -1 };
+/* ---------- plain number formats ---------- */
 
-export function PhaseBar({ auction, phase, now }: { auction: AuctionView; phase: Phase; now: bigint }) {
-  const current = stageOf[phase];
+const usd = (quote: TokenMeta) => /usd/i.test(quote.symbol);
+const group = (whole: string) => whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+/** `value` with exactly `places` decimals, rounded down, with thousands separators. */
+function fixed(value: bigint, decimals: number, places: number): string {
+  const [whole = "0", fraction = ""] = formatUnits(value, decimals).split(".");
+  return places > 0 ? `${group(whole)}.${fraction.padEnd(places, "0").slice(0, places)}` : group(whole);
+}
+
+/** Decimals needed to write `value` exactly. */
+function places(value: bigint, decimals: number): number {
+  const fraction = formatUnits(value, decimals).split(".")[1] ?? "";
+  return fraction.replace(/0+$/, "").length;
+}
+
+/** Money in the quote token: `$500.00` for dollar tokens, `500 WMON` otherwise. `cents: false` gives `$1,000`. */
+export function moneyText(value: bigint, quote: TokenMeta, cents = true): string {
+  if (usd(quote)) return `$${fixed(value, quote.decimals, cents ? 2 : 0)}`;
+  return `${formatAmount(value, quote.decimals, cents ? 4 : 0)} ${quote.symbol}`;
+}
+
+/** A price option, with as many decimals as the options need: `$0.012`, `$2.60`. */
+export function priceText(a: Pick<RawAuction, "minPrice" | "stepSize"> & { quote: TokenMeta }, value: bigint): string {
+  const q = a.quote;
+  const need = Math.min(6, Math.max(places(a.minPrice, q.decimals), places(a.stepSize, q.decimals)));
+  if (usd(q)) return `$${fixed(value, q.decimals, Math.max(2, need))}`;
+  return `${fixed(value, q.decimals, need)} ${q.symbol}`;
+}
+
+/** True when one lot is exactly one whole token. */
+export function wholeLots(a: Pick<RawAuction, "lotSize">, sale: TokenMeta): boolean {
+  return a.lotSize === 10n ** BigInt(sale.decimals);
+}
+
+/** Tokens for a number of lots: `25,000 NCAT`. */
+export function tokensText(a: AuctionView, lots: bigint): string {
+  return `${formatAmount(lots * a.lotSize, a.sale.decimals)} ${a.sale.symbol}`;
+}
+
+/* ---------- phase look ---------- */
+
+const phaseLook: Record<Phase, { tone: StickerTone; word: string; stage: TrackerStage; bad?: boolean; done?: boolean }> = {
+  scheduled: { tone: "violet", word: "Starts soon", stage: "bid" },
+  bidding: { tone: "yellow", word: "Live now", stage: "bid" },
+  awaitingKeys: { tone: "cyan", word: "Unlocking", stage: "unlock" },
+  opening: { tone: "cyan", word: "Unlocking", stage: "unlock" },
+  ready: { tone: "magenta", word: "Ready", stage: "result" },
+  cancellable: { tone: "coral", word: "Stuck", stage: "unlock", bad: true },
+  settled: { tone: "green", word: "Done", stage: "result", done: true },
+  cancelled: { tone: "green", word: "Money back", stage: "unlock", bad: true },
+};
+
+export function trackerOf(phase: Phase): { now: TrackerStage; bad: boolean; done: boolean } {
+  const look = phaseLook[phase];
+  return { now: look.stage, bad: look.bad ?? false, done: look.done ?? false };
+}
+
+/** The status sticker: LIVE NOW, UNLOCKING, STUCK… always word and colour. */
+export function PhaseSticker({ phase, className = "" }: { phase: Phase; className?: string }) {
+  const look = phaseLook[phase];
+  return <Sticker tone={look.tone} live={phase === "bidding"} className={className}>{look.word}</Sticker>;
+}
+
+const tips = [
+  "You never pay more than your max price.",
+  "Everyone locks the same bid money, so nobody can guess your size.",
+  "Bid high or bid right at the line: every winner pays the same final price.",
+  "If the bids can't unlock, everyone gets every cent back.",
+  "Trading on Kuru opens at the final price. No dump at listing.",
+  "Bots can't snipe what they can't see.",
+];
+
+/** One short tip at a time, changing every 6 seconds (still in calm mode). */
+export function Tip({ className = "" }: { className?: string }) {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (calm()) return;
+    const timer = window.setInterval(() => setIndex((value) => (value + 1) % tips.length), 6000);
+    return () => window.clearInterval(timer);
+  }, []);
   return (
-    <div className="glass sticky top-[4.5rem] z-30 mb-6 px-4 py-3 sm:top-[5.5rem]" role="status" aria-live="polite">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <ol className="flex flex-wrap items-center gap-1.5" aria-label="Auction status">
-          {current < 0 ? (
-            <li className="rounded-full bg-amber/15 px-3 py-1 text-xs font-semibold text-amber">Cancelled · refunds open</li>
-          ) : stages.map((stage, index) => (
-            <li
-              key={stage}
-              className={`rounded-full px-3 py-1 text-xs ${index === current ? "bg-amber font-semibold text-ink" : index < current ? "bg-teal/15 text-teal" : "bg-white/5 text-lilac"}`}
-              aria-current={index === current ? "step" : undefined}
-            >
-              {index < current ? "✓ " : ""}{stage}
-            </li>
-          ))}
-        </ol>
-        <p className={`min-w-0 flex-1 text-sm ${phase === "cancellable" ? "text-amber" : "text-mist"}`}>{phaseMessage(phase, auction, now)}</p>
-      </div>
-    </div>
+    <p className={`au-tip ${className}`}>
+      <span className="label !text-yellow">Tip</span>
+      <span key={index} className="au-tip-text">{tips[index]}</span>
+    </p>
   );
 }
+
+/* ---------- the quiet section ---------- */
 
 export function AuctionRules({ auction }: { auction: AuctionView }) {
   const { sale, quote } = auction;
   const top = priceAt(auction, auction.stepCount - 1);
+  const seeded = auction.seedSaleLots > 0n || auction.seedQuoteBps > 0;
   const rules: [string, string][] = [
-    ["For sale", `${formatAmount(auction.supply, sale.decimals)} ${sale.symbol}`],
-    ["Sold in lots of", lotLabel(auction, sale)],
-    ["Price levels", `${formatAmount(auction.minPrice, quote.decimals, 6)} to ${formatAmount(top, quote.decimals, 6)} ${quote.symbol}`],
-    ["Levels", `${auction.stepCount}, steps of ${formatAmount(auction.stepSize, quote.decimals, 6)}`],
-    ["Deposit per bidder", `${formatAmount(auction.deposit, quote.decimals)} ${quote.symbol}`],
-    ["Bids", `${auction.bidCount} of ${auction.maxBids.toLocaleString()}`],
+    ["Tokens for sale", `${formatAmount(auction.supply, sale.decimals)} ${sale.symbol}`],
+    ...(wholeLots(auction, sale) ? [] : [["Sold in packs of", `${formatAmount(auction.lotSize, sale.decimals)} ${sale.symbol}`] as [string, string]]),
+    ["Price options", `${priceText(auction, auction.minPrice)} to ${priceText(auction, top)} (${auction.stepCount} options)`],
+    ["Bid money per bidder", `${moneyText(auction.deposit, quote, false)}, unused part comes back`],
+    ...(auction.maxNotional < auction.deposit ? [["Most one bid can spend", moneyText(auction.maxNotional, quote)] as [string, string]] : []),
+    ["Secret bids", `${auction.bidCount.toLocaleString()} of ${auction.maxBids.toLocaleString()} places taken`],
     ["Bidding opens", formatDate(auction.commitStart)],
     ["Bidding closes", formatDate(auction.commitDeadline)],
-    ["Refund deadline if keys never come", formatDate(auction.cancelAfter)],
+    ["Full refund if bids don't unlock by", formatDate(auction.cancelAfter)],
     [
-      "Market at the price",
-      auction.seedSaleLots > 0n || auction.seedQuoteBps > 0
-        ? `Kuru, ${auction.seedSaleLots} lots and ${auction.seedQuoteBps / 100}% of proceeds, locked until ${formatDate(auction.seedLockUntil)}`
-        : "No market seeding",
+      "Trading on Kuru",
+      seeded
+        ? `Opens at the final price with ${formatAmount(auction.seedSaleLots * auction.lotSize, sale.decimals)} ${sale.symbol} and ${auction.seedQuoteBps / 100}% of the money raised, locked until ${formatDate(auction.seedLockUntil)}`
+        : "Not set up for this launch",
     ],
   ];
   return (
-    <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+    <dl className="au-rules m-0">
       {rules.map(([label, value]) => (
-        <div key={label} className="flex justify-between gap-3 border-b border-white/5 pb-2">
-          <dt className="text-lilac">{label}</dt>
-          <dd className="text-right font-mono text-paper">{value}</dd>
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
         </div>
       ))}
     </dl>
   );
 }
 
-export function DemandChart({ auction, demand }: { auction: AuctionView; demand: readonly bigint[] | undefined }) {
-  const prices = Array.from({ length: auction.stepCount }, (_, step) => formatAmount(priceAt(auction, step), auction.quote.decimals, 4));
-  const cumulative = prices.map((_, step) => (demand ?? []).slice(step, auction.stepCount).reduce((sum, lots) => sum + lots, 0n));
-  const settled = auction.status === 2;
-  return (
-    <StepChart
-      prices={prices}
-      demand={cumulative.map(Number)}
-      supply={Number(auction.supplyLots)}
-      clearingIndex={settled && auction.totalSold > 0n ? auction.clearingStep : null}
-      priceLabel="One price"
-      empty="Demand appears once bids are opened."
-    />
-  );
-}
+const PAGE = 10;
 
+/** Every bid in this launch. Locked bids show nothing but their place in line. */
 export function BidList({ auction, bids, account }: { auction: AuctionView; bids: readonly BidView[]; account: Address | null }) {
+  const [shown, setShown] = useState(PAGE);
+  if (bids.length === 0) return <p className="m-0 text-muted">No bids yet. The first one is still up for grabs.</p>;
   return (
-    <ul className="mt-4 grid gap-2">
-      {bids.length === 0 ? <li className="rounded-xl bg-white/[0.04] p-4 text-sm text-lilac">No bids yet.</li> : null}
-      {bids.map((bid) => {
-        const mine = account !== null && bid.bidder.toLowerCase() === account.toLowerCase();
-        const link = explorerUrl("address", bid.bidder);
-        const state = !bid.opened
-          ? <span className="text-xs text-lilac">sealed</span>
-          : bid.forfeited
-            ? <span className="text-xs text-amber">did not match its commitment · deposit forfeited</span>
-            : bid.counted
-              ? <span className="text-xs text-teal">{formatAmount(priceAt(auction, bid.step), auction.quote.decimals, 4)} {auction.quote.symbol} × {bid.quantity.toString()}</span>
-              : <span className="text-xs text-mist">opened, not counted · refunded</span>;
-        return (
-          <li key={bid.slot} className={`flex min-w-0 items-center gap-3 rounded-xl px-3 py-2 ${mine ? "bg-amber/10" : "bg-white/[0.04]"}`}>
-            <LockIcon className={`h-4 w-4 shrink-0 ${bid.opened ? "text-teal" : "text-amber"}`} open={bid.opened} />
-            <span className="w-8 shrink-0 font-mono text-xs text-lilac">#{bid.slot}</span>
-            <span className="min-w-0 flex-1 truncate">{state}</span>
-            <span className="hidden font-mono text-xs text-lavender sm:inline">{mine ? "you" : shortAddress(bid.bidder)}</span>
-            {link ? <a className="inline-flex min-h-9 items-center px-1 text-xs text-lilac no-underline hover:text-amber" href={link} target="_blank" rel="noreferrer" aria-label="Bidder on the explorer">↗</a> : null}
-          </li>
-        );
-      })}
-    </ul>
+    <>
+      <ul className="au-bids m-0 list-none p-0">
+        {bids.slice(0, shown).map((bid) => {
+          const mine = account !== null && bid.bidder.toLowerCase() === account.toLowerCase();
+          const link = explorerUrl("address", bid.bidder);
+          const [icon, tone, text] = !bid.opened
+            ? ["lock", "text-cyan", "Locked. Nobody can see it."] as const
+            : bid.forfeited
+              ? ["alert", "text-coral", "Cheating bid: its money is burned"] as const
+              : bid.counted
+                ? ["unlock", "text-green", `Asked ${tokensText(auction, bid.quantity)} at up to ${priceText(auction, priceAt(auction, bid.step))}`] as const
+                : ["return", "text-muted", "Didn't count: full refund"] as const;
+          return (
+            <li key={bid.slot} className={mine ? "is-mine" : ""}>
+              <Icon name={icon} size={18} className={tone} />
+              <span className="num text-muted">#{bid.slot + 1}</span>
+              <span className="min-w-0 truncate">{text}</span>
+              <span className="who">
+                {mine ? <b className="text-cyan">you</b> : link ? <a href={link} target="_blank" rel="noreferrer">{shortAddress(bid.bidder)}</a> : shortAddress(bid.bidder)}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      {bids.length > shown ? (
+        <button type="button" className="btn-2 mt-3" onClick={() => setShown((value) => value + PAGE * 2)}>
+          Show more ({bids.length - shown} left)
+        </button>
+      ) : null}
+    </>
   );
 }
 
+/** "Proof on chain": quiet links anyone can use to check this page against the contract. */
 export function VerifyLinks({ auction, extra = [] }: { auction: AuctionView; extra?: [string, string | null][] }) {
   const deployment = network.deployment;
-  const links: [string, string | null][] = [
-    ["Auction contract", deployment ? explorerUrl("address", deployment.auction) : null],
-    [`Token for sale, ${auction.sale.symbol}`, explorerUrl("address", auction.sale.address)],
-    [`Payment token, ${auction.quote.symbol}`, explorerUrl("address", auction.quote.address)],
-    [`Creator ${shortAddress(auction.authority)}`, explorerUrl("address", auction.authority)],
-    ...extra,
+  const rows: { label: string; address?: string; href: string | null }[] = [
+    ...(deployment ? [{ label: "Launch contract", address: deployment.auction, href: explorerUrl("address", deployment.auction) }] : []),
+    { label: `Token for sale (${auction.sale.symbol})`, address: auction.sale.address, href: explorerUrl("address", auction.sale.address) },
+    { label: `Money token (${auction.quote.symbol})`, address: auction.quote.address, href: explorerUrl("address", auction.quote.address) },
+    { label: "Creator", address: auction.authority, href: explorerUrl("address", auction.authority) },
+    ...extra.map(([label, href]) => ({ label, href })),
   ];
   return (
-    <GlassCard>
-      <h2 className="text-lg font-bold">Verify on chain</h2>
-      <p className="mt-2 text-sm text-mist">
-        Everything on this page is read from the contract. Call <span className="font-mono text-paper">getAuction({auction.id.toString()})</span> and{" "}
-        <span className="font-mono text-paper">getBid({auction.id.toString()}, slot)</span> on the explorer to check it.
-      </p>
-      <ul className="mt-4 grid gap-2">
-        {links.map(([label, href]) => (
-          <li key={label} className="flex min-h-11 items-center justify-between gap-3 rounded-xl bg-white/[0.04] px-3 text-sm text-paper">
-            {href ? <a className="no-underline hover:text-amber" href={href} target="_blank" rel="noreferrer">{label} ↗</a> : <span>{label}</span>}
-            {deployment && label === "Auction contract" ? <CopyButton value={deployment.auction} /> : null}
-          </li>
-        ))}
-      </ul>
-    </GlassCard>
+    <Panel className="au-fold">
+      <Fold title={<span className="inline-flex items-center gap-3"><Icon name="shield" size={20} className="text-cyan" />Proof on chain</span>}>
+        <p className="m-0 max-w-[40em] text-[15px] text-muted">
+          Everything on this page is read from the launch contract. Check it yourself: <span className="font-mono text-paper">getAuction({auction.id.toString()})</span>.
+        </p>
+        <ul className="au-proof m-0 mt-3 list-none p-0">
+          {rows.map((row) => (
+            <li key={row.label}>
+              <span>{row.label}</span>
+              {row.address ? <span className="font-mono text-[14px] text-muted">{shortAddress(row.address)}</span> : <span />}
+              <span className="flex items-center justify-end gap-1">
+                {row.href ? (
+                  <a className="label inline-flex min-h-10 items-center gap-1.5 px-2 !text-cyan no-underline hover:!text-yellow" href={row.href} target="_blank" rel="noreferrer">
+                    Open <Icon name="external" size={14} />
+                  </a>
+                ) : null}
+                {row.address ? <CopyButton value={row.address} /> : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Fold>
+    </Panel>
   );
 }

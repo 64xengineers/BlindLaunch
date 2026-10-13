@@ -1,1 +1,120 @@
-/* result screens: Blind Run styles owned by this area. */
+/* result screens: Blind Run styles owned by this area (result, my bids, my launches). */
+@layer components {
+  /* ---------- result layout ---------- */
+  .res-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr); gap: 40px; align-items: start; }
+  @media (max-width: 1023px) { .res-grid { grid-template-columns: minmax(0, 1fr); } }
+  /* the tracker sits in the narrower left column here: tighter cells so every stage name fits */
+  .tracker.res-track > * { gap: 7px; padding: 12px 8px 12px 26px; font-size: 13px; letter-spacing: 0.05em; }
+  .tracker.res-track > :first-child { padding-left: 14px; }
+
+  /* the final price: Oxanium 800, yellow, magenta misprint and a soft glow (numbers 40px+ only) */
+  .res-price {
+    font: 800 clamp(72px, 9vw, 132px)/0.9 var(--font-num); font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+    color: var(--color-yellow); text-shadow: 6px 6px 0 var(--color-magenta), 0 0 18px rgb(252 238 10 / 0.45);
+    white-space: nowrap;
+  }
+  .res-price.is-off { font: 400 clamp(56px, 7vw, 96px)/0.95 var(--font-shout); letter-spacing: 0.01em; color: var(--color-coral); text-shadow: 6px 6px 0 #000; white-space: normal; }
+  .res-per { margin-top: 10px; font: 700 15px/1.2 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-yellow); }
+  .res-say { margin: 18px 0 0; max-width: 34em; color: var(--color-muted); font: 500 20px/1.5 var(--font-sans); }
+  .res-say b { color: var(--color-paper); font-weight: 700; }
+  .res-everyone { animation: res-up 0.2s ease-out 1s both; }
+
+  /* Kuru, forfeits: dark HUD strips with a bright icon chip */
+  .res-strip { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 16px 20px; }
+  .res-strip .res-ic { display: grid; place-items: center; width: 40px; height: 40px; color: #000; border: 2px solid #000; background: var(--ic, var(--color-green)); }
+  .res-strip p { margin: 2px 0 0; font: 500 17px/1.4 var(--font-sans); color: var(--color-paper); }
+  .res-strip small { display: block; margin-top: 2px; font: 600 15px/1.4 var(--font-sans); color: var(--color-muted); }
+  .res-strip .acts { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  @media (max-width: 640px) {
+    .res-strip { grid-template-columns: auto minmax(0, 1fr); }
+    .res-strip .acts { grid-column: 1 / -1; align-items: flex-start; }
+    .res-loot, .res-neutral { padding: 20px 18px 22px; }
+    .res-loot .loot-line b { font-size: 22px; }
+    .res-stats .stat .v { font-size: clamp(20px, 6vw, 30px); }
+  }
+  .res-go { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: var(--color-cyan); font: 700 17px/1 var(--font-sans); text-decoration: none; white-space: nowrap; }
+  .res-go:hover { color: var(--color-yellow); }
+  .res-go .arrow { transition: transform 0.16s ease; }
+  .res-go:hover .arrow { transform: translateX(4px); }
+
+  /* ---------- the loot card ---------- */
+  /* The drop shadow sits on a wrapper, so the card's cut corner does not clip it. */
+  .res-pop { filter: drop-shadow(10px 10px 0 var(--loot-pop, var(--color-magenta))); }
+  .res-loot { padding: 24px 28px 28px; }
+  .res-loot .label { color: #000; }
+  .res-loot .loot-word { display: block; margin-top: 2px; font-size: clamp(44px, 5vw, 72px); }
+  .res-loot .loot-line { align-items: center; min-height: 54px; }
+  .res-loot .loot-line > span { font-size: 18px; }
+  .res-loot .loot-line small { display: block; font: 600 14px/1.2 var(--font-sans); color: #3a3a3a; }
+  .res-head { margin: 10px 0 0; font: 700 20px/1.3 var(--font-sans); color: #000; }
+  .res-foot { margin: 12px 0 0; font: 600 15px/1.4 var(--font-sans); color: #000; }
+  .res-neutral { padding: 24px 28px 28px; }
+  .res-neutral .loot-word { display: block; margin-top: 4px; font: 400 clamp(40px, 4.2vw, 60px)/0.95 var(--font-shout); color: var(--color-paper); }
+
+  /* COLLECTED stamp */
+  .res-stamp {
+    position: absolute; top: 22px; right: 22px; z-index: 2; padding: 4px 14px 2px;
+    font: 400 28px/1.1 var(--font-shout); text-transform: uppercase; color: #000; background: var(--color-green); border: 3px solid #000;
+    --slap-end: rotate(-8deg); transform: rotate(-8deg); animation: res-slap 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  }
+
+  /* creator card: magenta with black meter cells */
+  .res-creator .meter { background: rgb(0 0 0 / 0.22); border-color: #000; }
+  .res-creator .meter > span { background: repeating-linear-gradient(-45deg, #000 0 10px, #2b0612 10px 20px); }
+  .res-raised { font: 800 clamp(44px, 4.6vw, 64px)/0.95 var(--font-num); font-variant-numeric: tabular-nums; color: #000; }
+
+  /* Hush under the card */
+  .res-hushrow { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 22px; align-items: center; margin-top: 26px; }
+
+  /* loot drop: falls in with a spring, the word slaps, Hush pops */
+  .res-drop { animation: res-drop 0.7s cubic-bezier(0.2, 1.2, 0.4, 1) 0.65s both; }
+  .res-drop.is-soft { animation-name: res-drop-soft; animation-duration: 0.5s; animation-timing-function: cubic-bezier(0.2, 0.9, 0.25, 1); }
+  .res-slap { animation: res-slap 0.35s cubic-bezier(0.2, 1.4, 0.4, 1) 0.95s both; transform-origin: 20% 60%; }
+  .res-hush { display: inline-block; animation: res-pop 0.48s cubic-bezier(0.2, 1.5, 0.4, 1) 1.05s both; }
+  .res-after { animation: res-up 0.3s ease-out 1.15s both; }
+  .res-underline { background: linear-gradient(var(--color-green), var(--color-green)) left bottom / 0 3px no-repeat; animation: res-underline 0.4s ease-out 1.5s forwards; }
+
+  /* ---------- all bids table ---------- */
+  .res-fold { padding: 4px 22px; }
+  .res-fold summary { color: var(--color-muted); }
+  .res-table { width: 100%; min-width: 40rem; border-collapse: collapse; text-align: left; }
+  .res-table th { padding: 8px 14px; font: 700 13px/1.2 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-muted); border-bottom: 2px solid var(--color-line); }
+  .res-table td { padding: 11px 14px; font: 500 16px/1.3 var(--font-sans); color: var(--color-paper); border-bottom: 1px solid rgb(125 112 184 / 0.35); }
+  .res-table td.n { font-family: var(--font-num); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .res-table td.addr { font-family: ui-monospace, Menlo, monospace; font-size: 15px; color: var(--color-muted); }
+  .res-table tr.is-you td { background: rgb(0 240 255 / 0.08); }
+  .res-table tr.is-you td:first-child { box-shadow: inset 4px 0 0 var(--color-cyan); }
+  .res-table tr.is-you td.addr { color: var(--color-cyan); font-weight: 700; }
+  .res-table .you { margin-left: 8px; padding: 1px 6px; font: 700 12px/1.3 var(--font-sans); letter-spacing: 0.06em; text-transform: uppercase; color: #000; background: var(--color-cyan); }
+
+  /* ---------- my bids / my launches rows ---------- */
+  .mylist { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+  .mylist-item { transition: transform 0.16s ease, filter 0.16s ease; }
+  .mylist-item:hover, .mylist-item:focus-within { transform: translate(-3px, -3px); filter: drop-shadow(6px 6px 0 var(--color-magenta)); }
+  .mylist-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto auto; align-items: center; gap: 20px; padding: 14px 20px 14px 16px; }
+  .mylist-row h2 { margin: 0; font: 700 20px/1.15 var(--font-sans); color: var(--color-paper); }
+  .mylist-row h2 .tk { margin-left: 8px; font: 700 15px/1 var(--font-num); color: var(--color-muted); }
+  .mylist-row p { margin: 4px 0 0; font: 500 16px/1.4 var(--font-sans); color: var(--color-muted); }
+  .mylist-row p b { color: var(--color-paper); font-weight: 700; }
+  .mylist-link { color: inherit; text-decoration: none; }
+  .mylist-link::after { content: ""; position: absolute; inset: 0; z-index: 0; }
+  .mylist-row .art { transition: transform 0.3s cubic-bezier(0.2, 1.5, 0.4, 1); }
+  .mylist-item:hover .art { transform: rotate(-6deg); }
+  .mylist-row .stk { justify-self: end; }
+  .mylist-row .act { position: relative; z-index: 1; display: flex; justify-content: flex-end; min-width: 212px; }
+  @media (max-width: 720px) {
+    .mylist-row { grid-template-columns: 48px minmax(0, 1fr); }
+    .mylist-row .stk, .mylist-row .act { grid-column: 2; justify-self: start; min-width: 0; }
+  }
+}
+
+@keyframes res-drop {
+  0% { transform: translateY(-120px) scale(0.85) rotate(-4deg); opacity: 0; }
+  70% { transform: translateY(10px) scale(1) rotate(1deg); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes res-drop-soft { from { transform: translateY(-40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes res-slap { 0% { opacity: 0; transform: scale(1.6) rotate(6deg); } 15% { opacity: 1; } 100% { opacity: 1; transform: var(--slap-end, none); } }
+@keyframes res-pop { 0% { transform: scale(0); } 70% { transform: scale(1.12); } 100% { transform: scale(1); } }
+@keyframes res-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes res-underline { to { background-size: 100% 3px; } }

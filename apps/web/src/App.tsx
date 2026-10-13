@@ -8,6 +8,7 @@ import { ArtDefs, World } from "./components/art";
 import { LiveTicker } from "./components/ticker";
 import { Footer, Navbar, Toast } from "./components/ui";
 import { useBalance, WalletPicker } from "./components/wallet";
+import { CONNECT_EVENT } from "./state/connect";
 import { useToast } from "./state/hooks";
 import { AuctionPage } from "./screens/AuctionPage";
 import { CreatePage } from "./screens/CreatePage";
@@ -33,6 +34,12 @@ export function App() {
   useEffect(() => {
     window.scrollTo({ top: 0 });
   }, [pathname]);
+
+  useEffect(() => {
+    const open = () => setPicker(true);
+    window.addEventListener(CONNECT_EVENT, open);
+    return () => window.removeEventListener(CONNECT_EVENT, open);
+  }, []);
 
   return (
     <div className="relative isolate flex min-h-screen flex-col overflow-x-clip">

@@ -1,16 +1,96 @@
 import { allocationOf } from "@blindlaunch/sealed-bid";
-import { Link, useParams } from "react-router-dom";
-import type { Address } from "viem";
+import { openConnect } from "../state/connect";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useParams } from "react-router-dom";
+import { formatUnits, type Address } from "viem";
 import { useSession } from "../auth/session";
 import { reads } from "../chain/clients";
 import { explorerUrl, network } from "../chain/config";
 import { formatAmount, formatDate, shortAddress } from "../chain/format";
-import { formatPrice, phaseOf, SEED, type AuctionView, type BidView } from "../chain/model";
+import { lotLabel, phaseOf, priceAt, SEED, STATUS, type AuctionView, type BidView, type TokenMeta } from "../chain/model";
 import { outcomeOf, VerifyLinks } from "../components/auction";
-import { Badge, GlassCard, PrimaryButton } from "../components/ui";
+import { Bubble, CopyButton, Fold, Hush, Icon, Meter, Panel, PrimaryButton, SecondaryButton, Stat, TokenArt, Tracker } from "../components/ui";
 import { callAuction, claimLeg, openMarket, seedCall } from "../state/actions";
 import { useNow, usePolling, useRunner } from "../state/hooks";
+import { calm, confetti, useCountUp, useDecode } from "../state/motion";
 import { NotFound } from "./NotFound";
+
+/* ---------- plain-word formatting shared by the result, my bids and my launches ---------- */
+
+const isUsd = (quote: TokenMeta) => /usd/i.test(quote.symbol);
+const withUnit = (text: string, quote: TokenMeta) => (isUsd(quote) ? `$${text}` : `${text} ${quote.symbol}`);
+
+/** Money in loot, receipts and toasts: two decimals, "$600.00". */
+export function money(value: bigint, quote: TokenMeta): string {
+  const [whole = "0", fraction = ""] = formatAmount(value, quote.decimals, 2).split(".");
+  return withUnit(`${whole}.${fraction.padEnd(2, "0")}`, quote);
+}
+
+/** Money in stats and labels: whole dollars when it is whole, "$1,600". */
+export function moneyShort(value: bigint, quote: TokenMeta): string {
+  const [whole = "0", fraction = ""] = formatAmount(value, quote.decimals, 2).split(".");
+  return withUnit(fraction ? `${whole}.${fraction.padEnd(2, "0")}` : whole, quote);
+}
+
+/** A price: three decimals under one dollar ("$0.016"), two above ("$2.50"), more only when needed. */
+export function priceText(price: bigint, quote: TokenMeta): string {
+  const [whole = "0", fraction = ""] = formatAmount(price, quote.decimals, 6).split(".");
+  return withUnit(`${whole}.${fraction.padEnd(whole === "0" ? 3 : 2, "0")}`, quote);
+}
+
+/** Token amounts: thousands separators, "25,000 NCAT". */
+export function tokens(amount: bigint, sale: TokenMeta): string {
+  return `${formatAmount(amount, sale.decimals, 2)} ${sale.symbol}`;
+}
+
+/* ---------- what a bid got ---------- */
+
+export type LootKind = "won" | "fair" | "missed" | "refund" | "burned";
+export type Loot = { kind: LootKind; tokens: bigint; asked: bigint; paid: bigint; back: bigint; max: bigint; uncounted: boolean; percent: number };
+
+/** The bidder's outcome, from the bid and the contract's outcome fields (the same rule as `claimable`). */
+export function lootOf(auction: AuctionView, bid: BidView): Loot {
+  const asked = bid.quantity * auction.lotSize;
+  const max = priceAt(auction, bid.step);
+  const none = { tokens: 0n, asked, paid: 0n, max, uncounted: false, percent: 0 };
+  if (auction.status === STATUS.Cancelled) return { ...none, kind: "refund", back: auction.deposit };
+  if (bid.forfeited) return { ...none, kind: "burned", back: 0n };
+  const lots = allocationOf({ counted: bid.counted, step: bid.step, quantity: bid.quantity, prefix: bid.prefix }, outcomeOf(auction));
+  const paid = lots * auction.clearingPrice;
+  const got = { ...none, tokens: lots * auction.lotSize, paid, back: auction.deposit - paid, percent: bid.quantity > 0n ? Number((lots * 100n) / bid.quantity) : 0 };
+  if (!bid.counted) return { ...got, kind: "refund", uncounted: true };
+  if (lots === 0n) return { ...got, kind: "missed" };
+  return { ...got, kind: lots < bid.quantity ? "fair" : "won" };
+}
+
+/** Opens the Connect picker in the top bar (the screens have no direct handle on it). */
+
+/** A value that counts up from zero after `delay`, then shows its exact text. */
+function Rolling({ value, decimals, exact, approx, delay = 1250 }: { value: bigint; decimals: number; exact: string; approx: (shown: number) => string; delay?: number }) {
+  const target = Number(formatUnits(value, decimals));
+  const [armed, setArmed] = useState(calm);
+  useEffect(() => {
+    if (armed) return;
+    const timer = window.setTimeout(() => setArmed(true), delay);
+    return () => window.clearTimeout(timer);
+  }, [armed, delay]);
+  const shown = useCountUp(armed ? target : 0, 900);
+  return <>{Math.abs(shown - target) <= Math.abs(target) * 1e-12 ? exact : approx(shown)}</>;
+}
+
+const groupedNumber = (fraction: number) => (shown: number) => shown.toLocaleString("en-US", { minimumFractionDigits: fraction, maximumFractionDigits: fraction });
+
+function RollMoney({ value, quote, delay, short = false }: { value: bigint; quote: TokenMeta; delay?: number; short?: boolean }) {
+  const exact = short ? moneyShort(value, quote) : money(value, quote);
+  const fraction = short && !exact.includes(".") ? 0 : 2;
+  return <Rolling value={value} decimals={quote.decimals} exact={exact} approx={(shown) => withUnit(groupedNumber(fraction)(shown), quote)} delay={delay} />;
+}
+
+function RollTokens({ value, sale, delay }: { value: bigint; sale: TokenMeta; delay?: number }) {
+  return <Rolling value={value} decimals={sale.decimals} exact={tokens(value, sale)} approx={(shown) => `${groupedNumber(0)(shown)} ${sale.symbol}`} delay={delay} />;
+}
+
+/* ---------- the page ---------- */
 
 export function ResultPage() {
   const { id } = useParams();
@@ -18,6 +98,8 @@ export function ResultPage() {
   if (!reads) return <NotFound message={`Blindlaunch is not deployed on ${network.label} yet.`} />;
   return <ResultScreen id={BigInt(id)} />;
 }
+
+type Position = Awaited<ReturnType<NonNullable<typeof reads>["position"]>>;
 
 function ResultScreen({ id }: { id: bigint }) {
   const { signer } = useSession();
@@ -35,156 +117,482 @@ function ResultScreen({ id }: { id: bigint }) {
     return { auction, bids, position, slot, claimable };
   }, [id, account]);
 
-  if (loading && !data) return <div className="mx-auto max-w-6xl px-4"><div className="shimmer h-72 rounded-[20px] bg-white/5" /></div>;
-  if (!data) return <NotFound message={`Auction ${id} does not exist.`} />;
+  if (loading && !data) {
+    return (
+      <div className="mx-auto max-w-[1360px] px-4 pb-24 sm:px-6 lg:px-8">
+        <div className="res-grid">
+          <div className="grid gap-5"><div className="shimmer h-12" /><div className="shimmer h-36" /><div className="shimmer h-24" /></div>
+          <div className="shimmer h-[420px]" />
+        </div>
+      </div>
+    );
+  }
+  if (!data) return <NotFound message={`Launch ${id} does not exist.`} />;
   const { auction, bids, position, slot, claimable } = data;
   const phase = phaseOf(auction, now);
   if (phase !== "settled" && phase !== "cancelled") {
-    return <NotFound message="This auction has not finished yet. Follow it on the auction page." />;
+    return <NotFound message="This launch has not finished yet. Follow it on the launch page." />;
   }
   const settled = phase === "settled";
   const isAuthority = account !== null && account.toLowerCase() === auction.authority.toLowerCase();
   const market = position.seeded ? explorerUrl("address", position.market) : null;
+  const bid = slot !== null ? bids[slot] ?? null : null;
+  const loot = bid && claimable ? lootOf(auction, bid) : null;
+  const trading = position.seeded && !position.unwound;
+  const soldPercent = auction.supplyLots > 0n ? (auction.totalSold * 100n) / auction.supplyLots : 0n;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pb-20">
-      <Badge tone={settled ? "teal" : "paper"}>Auction {auction.id.toString()} · {settled ? "settled" : "cancelled"}</Badge>
-      <h1 className="mt-5 text-5xl font-bold leading-[0.95] tracking-[-0.04em]">{auction.sale.name}</h1>
-      <div className="mt-8 grid gap-4 md:grid-cols-3">
-        <GlassCard><div className="text-sm text-lilac">Everyone paid</div><div className="mt-2 text-3xl font-bold text-amber">{settled && auction.totalSold > 0n ? formatPrice(auction.clearingPrice, auction, auction.sale, auction.quote) : "Nothing"}</div></GlassCard>
-        <GlassCard><div className="text-sm text-lilac">Sold</div><div className="mt-2 text-3xl font-bold">{auction.totalSold.toString()} <span className="text-base text-mist">of {auction.supplyLots.toString()} lots</span></div></GlassCard>
-        <GlassCard><div className="text-sm text-lilac">Bids</div><div className="mt-2 text-3xl font-bold">{auction.bidCount}</div></GlassCard>
+    <div className="mx-auto max-w-[1360px] px-4 pb-24 sm:px-6 lg:px-8">
+      <div className="res-grid">
+        <section aria-labelledby="res-title" className="min-w-0">
+          <Tracker className="res-track" now={trading || position.unwound ? "trading" : "result"} bad={!settled} done={position.unwound} />
+          <PriceHero auction={auction} settled={settled} loot={loot} />
+          <div className="res-stats mt-7 grid grid-cols-3 gap-3">
+            <Stat label="Sold" tone="cyan" value={<Rolling value={soldPercent} decimals={0} exact={`${soldPercent}%`} approx={(shown) => `${Math.round(shown)}%`} delay={500} />} />
+            <Stat label="Bids" value={<Rolling value={BigInt(auction.bidCount)} decimals={0} exact={auction.bidCount.toLocaleString("en-US")} approx={(shown) => groupedNumber(0)(shown)} delay={500} />} />
+            <Stat label="Raised" value={<RollMoney value={auction.totalSold * auction.clearingPrice} quote={auction.quote} delay={500} short />} />
+          </div>
+          {settled && auction.seedState !== SEED.None ? <KuruCard auction={auction} position={position} now={now} market={market} onDone={reload} /> : null}
+          {settled && auction.forfeitedTotal > 0n && !auction.forfeitsBurned ? <ForfeitCard auction={auction} onDone={reload} /> : null}
+        </section>
+
+        <section aria-label="Your result" className="min-w-0">
+          {isAuthority ? (
+            <CreatorCard auction={auction} onDone={reload} />
+          ) : loot && claimable ? (
+            <LootCard auction={auction} loot={loot} claimable={claimable} trading={trading} onDone={reload} />
+          ) : (
+            <VisitorCard auction={auction} signedIn={account !== null} trading={trading} />
+          )}
+        </section>
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        {slot !== null && claimable ? <ClaimCard auction={auction} claimable={claimable} onDone={reload} /> : null}
-        {isAuthority ? <AuthorityCard auction={auction} onDone={reload} /> : null}
-        {settled && auction.seedState !== SEED.None ? <MarketCard auction={auction} position={position} now={now} market={market} onDone={reload} /> : null}
-        {settled && auction.forfeitedTotal > 0n && !auction.forfeitsBurned ? <ForfeitCard auction={auction} onDone={reload} /> : null}
+      <div className="mt-14 grid gap-3">
+        {settled && bids.length > 0 ? (
+          <Panel className="res-fold">
+            <Fold title={<span className="inline-flex items-center gap-3"><Icon name="unlock" size={20} className="text-cyan" />See all bids ({bids.length})</span>}>
+              <BidsTable auction={auction} bids={bids} account={account} />
+            </Fold>
+          </Panel>
+        ) : null}
+        <VerifyLinks auction={auction} extra={market ? [["Kuru market", market]] : []} />
       </div>
-
-      {settled ? <AllocationTable auction={auction} bids={bids} account={account} /> : null}
-      <div className="mt-6"><VerifyLinks auction={auction} extra={market ? [["Kuru market", market]] : []} /></div>
-      <Link className="mt-6 inline-block text-amber" to={`/auction/${auction.id}`}>← Auction page</Link>
     </div>
   );
 }
 
-function ClaimCard({ auction, claimable, onDone }: { auction: AuctionView; claimable: readonly [bigint, bigint]; onDone: () => void }) {
-  const { run, busy } = useRunner();
-  const [tokens, refund] = claimable;
-  const nothing = tokens === 0n && refund === 0n;
-  return (
-    <GlassCard>
-      <h2 className="text-lg font-bold">Your claim</h2>
-      <dl className="mt-3 grid gap-2 text-sm">
-        <div className="flex justify-between"><dt className="text-lilac">Tokens</dt><dd className="font-mono text-paper">{formatAmount(tokens, auction.sale.decimals)} {auction.sale.symbol}</dd></div>
-        <div className="flex justify-between"><dt className="text-lilac">Refund</dt><dd className="font-mono text-paper">{formatAmount(refund, auction.quote.decimals)} {auction.quote.symbol}</dd></div>
-      </dl>
-      <div className="mt-4 grid gap-2">
-        <PrimaryButton disabled={busy !== null || nothing} onClick={() => void run("Claim", (w) => callAuction(w, "claim", auction.id)).then(onDone)}>
-          {nothing ? "Nothing left to claim" : busy === "Claim" ? "Claiming…" : "Claim"}
-        </PrimaryButton>
-        {!nothing ? (
-          <details className="text-sm">
-            <summary className="min-h-11 cursor-pointer py-2 text-lilac hover:text-paper">Claim one part only</summary>
-            <p className="text-xs text-lilac">If one token is paused or blocks your address, claim the other on its own.</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {refund > 0n ? <button type="button" className="btn-secondary min-h-11" disabled={busy !== null} onClick={() => void run("Claim refund", (w) => claimLeg(w, "claimRefund", auction.id)).then(onDone)}>Refund only</button> : null}
-              {tokens > 0n ? <button type="button" className="btn-secondary min-h-11" disabled={busy !== null} onClick={() => void run("Claim tokens", (w) => claimLeg(w, "claimTokens", auction.id)).then(onDone)}>Tokens only</button> : null}
-            </div>
-          </details>
-        ) : null}
+/* ---------- left: the final price ---------- */
+
+function PriceHero({ auction, settled, loot }: { auction: AuctionView; settled: boolean; loot: Loot | null }) {
+  const { sale, quote } = auction;
+  const sold = auction.totalSold > 0n;
+  const price = priceText(auction.clearingPrice, quote);
+  const shown = useDecode(settled && sold ? price : "", 250);
+  const oneToken = auction.lotSize === 10n ** BigInt(sale.decimals);
+  const name = sale.name.toUpperCase();
+  const people = auction.bidCount === 1 ? "1 person bid" : `${auction.bidCount.toLocaleString("en-US")} people bid`;
+
+  if (!settled || !sold) {
+    return (
+      <div className="mt-8">
+        <div className="flex items-center gap-3">
+          <TokenArt address={sale.address} size={44} />
+          <h1 id="res-title" className="label !text-[15px]">{name} · {settled ? "no sale" : "called off"}</h1>
+        </div>
+        <div className="res-price is-off mt-4">{settled ? "No sale" : "Called off"}</div>
+        <p className="res-say">
+          {settled
+            ? auction.bidCount === 0
+              ? <>Nobody bid, so nothing sold. <b>Nobody pays anything.</b></>
+              : <>{people}, but no bid counted, so nothing sold. <b>Nobody pays anything.</b> Bid money comes back.</>
+            : <>The unlock keys never came, so <b>nobody pays anything.</b> Every cent of bid money comes back.</>}
+        </p>
       </div>
-    </GlassCard>
+    );
+  }
+
+  const startingPrice = auction.clearingStep === 0 && auction.totalSold < auction.supplyLots;
+  const yours = loot && (loot.kind === "won" || loot.kind === "fair")
+    ? <> You bid up to <b>{priceText(loot.max, quote)}</b>, so you pay <b>{price}</b> like everyone else.</>
+    : loot && loot.kind === "missed"
+      ? <> You bid up to <b>{priceText(loot.max, quote)}</b>, below the final price.</>
+      : null;
+  return (
+    <div className="mt-8">
+      <div className="flex items-center gap-3">
+        <TokenArt address={sale.address} size={44} />
+        <h1 id="res-title" className="label !text-[15px]">{name} final price · everyone pays</h1>
+      </div>
+      <div className="res-price mt-3" aria-hidden="true">{shown}</div>
+      <p className="sr-only" aria-live="polite">Final price: {price} per {oneToken ? "token" : lotLabel(auction, sale)}</p>
+      {!oneToken ? <div className="res-per">per {lotLabel(auction, sale)}</div> : null}
+      <p className="res-say res-everyone">
+        Bids unlocked. {people}. <b>{formatAmount(auction.totalSold * auction.lotSize, sale.decimals, 2)} of {tokens(auction.supply, sale)}</b> sold.
+        {startingPrice ? " Not every token sold, so everyone pays the starting price." : ""}
+        {yours}
+      </p>
+    </div>
   );
 }
 
-function AuthorityCard({ auction, onDone }: { auction: AuctionView; onDone: () => void }) {
-  const { run, busy } = useRunner();
-  const done = auction.unsoldReclaimed && auction.proceedsReclaimed;
-  return (
-    <GlassCard>
-      <h2 className="text-lg font-bold">You created this auction</h2>
-      <p className="mt-2 text-sm text-mist">Collect the proceeds and any unsold tokens. Tokens reserved for the Kuru market come back through the market card after its lock.</p>
-      <div className="mt-4 grid gap-2">
-        <PrimaryButton disabled={busy !== null || done} onClick={() => void run("Reclaim", (w) => callAuction(w, "reclaim", auction.id)).then(onDone)}>
-          {done ? "Already collected" : busy === "Reclaim" ? "Collecting…" : "Collect proceeds and unsold tokens"}
-        </PrimaryButton>
-        {!done ? (
-          <div className="flex flex-wrap gap-2 text-sm">
-            {!auction.proceedsReclaimed ? <button type="button" className="btn-secondary min-h-11" disabled={busy !== null} onClick={() => void run("Collect proceeds", (w) => claimLeg(w, "reclaimProceeds", auction.id)).then(onDone)}>Proceeds only</button> : null}
-            {!auction.unsoldReclaimed ? <button type="button" className="btn-secondary min-h-11" disabled={busy !== null} onClick={() => void run("Collect unsold", (w) => claimLeg(w, "reclaimUnsold", auction.id)).then(onDone)}>Unsold tokens only</button> : null}
-          </div>
-        ) : null}
-      </div>
-    </GlassCard>
-  );
-}
+/* ---------- left: Kuru and forfeits ---------- */
 
-type Position = Awaited<ReturnType<NonNullable<typeof reads>["position"]>>;
-
-function MarketCard({ auction, position, now, market, onDone }: { auction: AuctionView; position: Position; now: bigint; market: string | null; onDone: () => void }) {
+function KuruCard({ auction, position, now, market, onDone }: { auction: AuctionView; position: Position; now: bigint; market: string | null; onDone: () => void }) {
   const { run, busy } = useRunner();
+  const { sale, quote } = auction;
   const locked = now < auction.seedLockUntil;
   const reserved = auction.seedState === SEED.Reserved;
   const waiting = auction.seedState === SEED.HandedOff && position.accepted && !position.seeded && !position.unwound;
+  const live = position.seeded && !position.unwound;
+  const canUnwind = position.accepted && !position.unwound && !locked;
+  const price = priceText(auction.clearingPrice, quote);
+  const setAside = `${tokens(auction.seedSale, sale)} and ${money(auction.seedQuote, quote)}`;
+
+  let tone = "var(--color-green)";
+  let icon: Parameters<typeof Icon>[0]["name"] = "arrow-up-right";
+  let title: string;
+  let body: ReactNode;
+  let note: ReactNode = null;
+  if (position.unwound) {
+    tone = "var(--color-violet)"; icon = "check";
+    title = "Trading on Kuru closed";
+    body = "The market was unwound after the lock. What was left went back to the creator.";
+  } else if (live && canUnwind) {
+    title = "The lock is over";
+    body = <>{sale.symbol} still trades on Kuru from {price}. Anyone can now close the market; what is left goes back to the creator.</>;
+  } else if (live) {
+    title = "Trading is live";
+    body = <>{sale.symbol} trades on Kuru from <span className="num font-bold">{price}</span></>;
+    note = `Locked until ${formatDate(auction.seedLockUntil)}.`;
+  } else if (reserved || waiting) {
+    tone = "var(--color-cyan)"; icon = "play";
+    title = reserved && !locked ? "Trading never started" : "Start trading on Kuru";
+    body = <>{setAside} are set aside to open trading at {price}. Anyone can press this.</>;
+    if (reserved && !locked) note = "The lock is over, so they can also go back to the creator.";
+  } else if (auction.seedState === SEED.Released) {
+    tone = "var(--color-violet)"; icon = "return";
+    title = "Trading never started";
+    body = "What was set aside for Kuru went back to the creator.";
+  } else {
+    tone = "var(--color-violet)"; icon = "clock";
+    title = "Trading on Kuru";
+    body = <>{setAside} went to Kuru to open trading at {price}.</>;
+  }
+
+  const action = (label: string, done: string, fn: Parameters<typeof run>[1]) => () => void run(label, fn, done).then(onDone);
   return (
-    <GlassCard>
-      <h2 className="text-lg font-bold">Market at the clearing price</h2>
-      <p className="mt-2 text-sm text-mist">
-        {formatAmount(auction.seedSale, auction.sale.decimals)} {auction.sale.symbol} and {formatAmount(auction.seedQuote, auction.quote.decimals)} {auction.quote.symbol} were set aside to open a Kuru order book at the clearing price, locked until {formatDate(auction.seedLockUntil)}.
-      </p>
-      <div className="mt-4 grid gap-2">
-        {position.seeded && market ? <a className="btn-secondary inline-flex min-h-11 items-center justify-center no-underline" href={market} target="_blank" rel="noreferrer">Kuru market ↗</a> : null}
-        {position.seeded && !market ? <p className="font-mono text-xs text-lilac">Market {shortAddress(position.market)}</p> : null}
-        {reserved || waiting ? <PrimaryButton disabled={busy !== null} onClick={() => void run("Open the market", (w) => openMarket(w, auction.id)).then(onDone)}>{busy === "Open the market" ? "Opening…" : "Open the market"}</PrimaryButton> : null}
-        {reserved && !locked ? <button type="button" className="btn-secondary min-h-11" disabled={busy !== null} onClick={() => void run("Release the seed", (w) => callAuction(w, "releaseSeed", auction.id)).then(onDone)}>Return the reserved seed to the creator</button> : null}
-        {position.accepted && !position.unwound && !locked ? <button type="button" className="btn-secondary min-h-11" disabled={busy !== null} onClick={() => void run("Unwind the market", (w) => seedCall(w, "unwind", auction.id)).then(onDone)}>Unwind and pay the creator</button> : null}
-        {position.unwound ? <p className="text-sm text-teal">Unwound. Everything went back to the creator.</p> : null}
+    <Panel className="res-strip mt-5">
+      <span className="res-ic" style={{ "--ic": tone } as CSSProperties}><Icon name={icon} size={24} /></span>
+      <div className="min-w-0">
+        <div className="label" style={{ color: tone }}>{title}</div>
+        <p>{body}</p>
+        {note ? <small>{note}</small> : null}
       </div>
-    </GlassCard>
+      <div className="acts">
+        {live && market ? <a className="res-go" href={market} target="_blank" rel="noreferrer">Trade on Kuru <span className="arrow">→</span></a> : null}
+        {live && !market ? <span className="flex items-center gap-1 font-mono text-sm text-muted">{shortAddress(position.market)}<CopyButton value={position.market} /></span> : null}
+        {reserved || waiting ? (
+          <SecondaryButton icon="play" disabled={busy !== null} onClick={action("Start trading", `Trading is live on Kuru at ${price}.`, (w) => openMarket(w, auction.id))}>
+            {busy === "Start trading" ? "Starting trading…" : "Start trading"}
+          </SecondaryButton>
+        ) : null}
+        {reserved && !locked ? (
+          <SecondaryButton icon="return" disabled={busy !== null} onClick={action("Return the reserved tokens", `Returned. ${setAside} went back to the creator.`, (w) => callAuction(w, "releaseSeed", auction.id))}>
+            {busy === "Return the reserved tokens" ? "Returning…" : "Return the reserved tokens"}
+          </SecondaryButton>
+        ) : null}
+        {canUnwind ? (
+          <SecondaryButton icon="return" disabled={busy !== null} onClick={action("Unwind the market", "Market unwound. What was left went back to the creator.", (w) => seedCall(w, "unwind", auction.id))}>
+            {busy === "Unwind the market" ? "Unwinding…" : "Unwind the market"}
+          </SecondaryButton>
+        ) : null}
+      </div>
+    </Panel>
   );
 }
 
 function ForfeitCard({ auction, onDone }: { auction: AuctionView; onDone: () => void }) {
   const { run, busy } = useRunner();
   return (
-    <GlassCard>
-      <h2 className="text-lg font-bold">Forfeited deposits</h2>
-      <p className="mt-2 text-sm text-mist">
-        {formatAmount(auction.forfeitedTotal, auction.quote.decimals)} {auction.quote.symbol} came from bids that did not match their own commitment. They go to a burn address, never to the creator.
-      </p>
-      <div className="mt-4"><PrimaryButton disabled={busy !== null} onClick={() => void run("Burn", (w) => callAuction(w, "burnForfeits", auction.id)).then(onDone)}>Burn them</PrimaryButton></div>
-    </GlassCard>
+    <Panel className="res-strip mt-4">
+      <span className="res-ic" style={{ "--ic": "var(--color-coral)" } as CSSProperties}><Icon name="alert" size={24} /></span>
+      <div className="min-w-0">
+        <div className="label !text-coral">A bid cheated</div>
+        <p>A bid that cheated lost its money (<span className="num font-bold">{money(auction.forfeitedTotal, auction.quote)}</span>). It gets burned; nobody gets it.</p>
+        <small>Anyone can press this.</small>
+      </div>
+      <div className="acts">
+        <SecondaryButton icon="x" disabled={busy !== null} onClick={() => void run("Burn it", (w) => callAuction(w, "burnForfeits", auction.id), "Burned. Nobody gets that money.").then(onDone)}>
+          {busy === "Burn it" ? "Burning…" : "Burn it"}
+        </SecondaryButton>
+      </div>
+    </Panel>
   );
 }
 
-function AllocationTable({ auction, bids, account }: { auction: AuctionView; bids: readonly BidView[]; account: Address | null }) {
-  const outcome = outcomeOf(auction);
+/* ---------- right: the loot card ---------- */
+
+const lootStyle: Record<LootKind, { word: string; fill: string; pop: string; pose: Parameters<typeof Hush>[0]["pose"]; soft: boolean }> = {
+  won: { word: "You won", fill: "var(--color-yellow)", pop: "var(--color-magenta)", pose: "win", soft: false },
+  fair: { word: "Fair share", fill: "var(--color-cyan)", pop: "var(--color-magenta)", pose: "fair", soft: false },
+  missed: { word: "Missed", fill: "var(--color-coral)", pop: "var(--color-cyan)", pose: "missed", soft: true },
+  refund: { word: "Money back", fill: "var(--color-green)", pop: "var(--color-magenta)", pose: "refund", soft: true },
+  burned: { word: "Burned", fill: "var(--color-coral)", pop: "var(--color-cyan)", pose: "error", soft: true },
+};
+
+function LootCard({ auction, loot, claimable, trading, onDone }: { auction: AuctionView; loot: Loot; claimable: readonly [bigint, bigint]; trading: boolean; onDone: () => void }) {
+  const { run, busy } = useRunner();
+  const card = useRef<HTMLDivElement>(null);
+  const { sale, quote } = auction;
+  const style = lootStyle[loot.kind];
+  const [tokensLeft, moneyLeft] = claimable;
+  const nothing = tokensLeft === 0n && moneyLeft === 0n;
+  const collected = nothing && (loot.tokens > 0n || loot.back > 0n);
+  const price = priceText(auction.clearingPrice, quote);
+  const celebrate = loot.kind === "won" || loot.kind === "fair";
+
+  useEffect(() => {
+    if (!celebrate) return;
+    const timer = window.setTimeout(() => confetti(card.current, loot.kind === "won" ? 160 : 70), 1150);
+    return () => window.clearTimeout(timer);
+  }, [celebrate, loot.kind]);
+
+  const both = [tokensLeft > 0n ? tokens(tokensLeft, sale) : null, moneyLeft > 0n ? money(moneyLeft, quote) : null].filter(Boolean).join(" and ");
+  const collectedToast = tokensLeft > 0n ? `Collected. ${both} are in your wallet.` : `Collected. ${both} is back in your wallet.`;
+
+  const headline = {
+    won: <>You got all {tokens(loot.tokens, sale)} at {price} each.</>,
+    fair: <>Crowded! You got {loot.percent}% of what you asked for.</>,
+    missed: <>The final price, {price}, was above your {priceText(loot.max, quote)} max.</>,
+    refund: loot.uncounted ? <>Your bid did not count, so every cent comes back.</> : <>Called off. Every cent comes back.</>,
+    burned: <>Your bid did not match what you locked, so its money was burned.</>,
+  }[loot.kind];
+
+  const footnote = {
+    won: loot.max > auction.clearingPrice ? <>Your max was {priceText(loot.max, quote)}. You paid less: {price} a token.</> : <>Your max was exactly the final price.</>,
+    fair: <>Lots of bids landed exactly on {price}, so each got the same share.</>,
+    missed: <>All your money comes back.{trading ? ` You can still buy ${sale.symbol} on Kuru.` : ""}</>,
+    refund: null,
+    burned: <>It gets burned; nobody gets it.</>,
+  }[loot.kind];
+
+  const bubble = collected
+    ? <>All collected. <b>{[loot.tokens > 0n ? tokens(loot.tokens, sale) : null, loot.back > 0n ? money(loot.back, quote) : null].filter(Boolean).join(" and ")}</b> went to your wallet.</>
+    : {
+      won: <>GG. Your <b>{tokens(loot.tokens, sale)}</b> and <b>{money(loot.back, quote)}</b> back, in one tap.</>,
+      fair: <>It was crowded at the final price, so everyone there got a fair share. Yours: <b>{tokens(loot.tokens, sale)}</b>.</>,
+      missed: <>The final price ended above your max. All <b>{money(loot.back, quote)}</b> comes back.</>,
+      refund: <>Nobody pays anything. All <b>{money(loot.back, quote)}</b> comes back, in one tap.</>,
+      burned: <>That bid did not match what was locked, so there is nothing to collect.</>,
+    }[loot.kind];
+
   return (
-    <section className="glass mt-6 overflow-x-auto p-5 sm:p-6">
-      <h2 className="text-lg font-bold">Every bid</h2>
-      <table className="mt-4 w-full min-w-[32rem] text-left text-sm">
-        <thead className="text-lilac">
-          <tr><th className="py-2 font-normal">Bid</th><th className="font-normal">Bidder</th><th className="font-normal">Asked</th><th className="font-normal">Got</th><th className="font-normal">Paid</th></tr>
-        </thead>
-        <tbody>
-          {bids.map((bid) => {
-            const lots = allocationOf({ counted: bid.counted, step: bid.step, quantity: bid.quantity, prefix: bid.prefix }, outcome);
-            const mine = account !== null && bid.bidder.toLowerCase() === account.toLowerCase();
-            return (
-              <tr key={bid.slot} className={`border-t border-white/5 ${mine ? "text-amber" : "text-paper"}`}>
-                <td className="py-2 font-mono">#{bid.slot}</td>
-                <td className="font-mono">{mine ? "you" : shortAddress(bid.bidder)}</td>
-                <td>{bid.forfeited ? "did not match · forfeited" : bid.counted ? `${bid.quantity} at ≤ ${formatAmount(auction.minPrice + BigInt(bid.step) * auction.stepSize, auction.quote.decimals, 4)}` : "not counted · refunded"}</td>
-                <td className="font-mono">{lots.toString()}</td>
-                <td className="font-mono">{formatAmount(lots * auction.clearingPrice, auction.quote.decimals)} {auction.quote.symbol}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </section>
+    <div>
+      <div className={`res-pop res-drop ${style.soft ? "is-soft" : ""}`} style={{ "--loot-pop": style.pop } as CSSProperties}>
+        <div ref={card} className="loot res-loot" style={{ "--loot": style.fill } as CSSProperties}>
+          {collected ? <span className="res-stamp" aria-hidden="true">Collected</span> : null}
+          <div className="label">Your result</div>
+          <h2 className="loot-word shout res-slap m-0 uppercase">{style.word}</h2>
+          <p className="res-head">{headline}</p>
+          <div className="mt-4 grid gap-2.5">
+            <div className="loot-line">
+              <span>Tokens you get{loot.kind === "fair" ? <small>of {tokens(loot.asked, sale)} asked</small> : null}</span>
+              <b><RollTokens value={loot.tokens} sale={sale} /></b>
+            </div>
+            <div className="loot-line"><span>You paid</span><b><RollMoney value={loot.paid} quote={quote} /></b></div>
+            <div className="loot-line">
+              <span className={loot.kind === "missed" ? "res-underline" : ""}>Money back</span>
+              <b><RollMoney value={loot.back} quote={quote} /></b>
+            </div>
+          </div>
+          {footnote ? <p className="res-foot">{footnote}</p> : null}
+          <div className="mt-5 pr-2">
+            <PrimaryButton
+              tone={loot.kind === "refund" ? "cyan" : "green"}
+              icon={nothing ? "check" : "bag"}
+              disabled={busy !== null || nothing}
+              onClick={() => void run("Collect", (w) => callAuction(w, "claim", auction.id), collectedToast).then(onDone)}
+            >
+              {nothing ? "Nothing left to collect" : busy === "Collect" ? "Collecting…" : "Collect it all"}
+            </PrimaryButton>
+          </div>
+        </div>
+      </div>
+      {tokensLeft > 0n && moneyLeft > 0n ? (
+        <Fold className="res-after mt-4 px-1" title={<span className="text-[15px] text-muted">Trouble collecting?</span>}>
+          <p className="m-0 text-[15px] text-muted">If one token is paused or blocks your address, collect the other on its own.</p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            <SecondaryButton icon="coin" disabled={busy !== null} onClick={() => void run("Tokens only", (w) => claimLeg(w, "claimTokens", auction.id), `Collected. ${tokens(tokensLeft, sale)} are in your wallet.`).then(onDone)}>
+              {busy === "Tokens only" ? "Collecting…" : "Tokens only"}
+            </SecondaryButton>
+            <SecondaryButton icon="dollar" disabled={busy !== null} onClick={() => void run("Money only", (w) => claimLeg(w, "claimRefund", auction.id), `Collected. ${money(moneyLeft, quote)} is back in your wallet.`).then(onDone)}>
+              {busy === "Money only" ? "Collecting…" : "Money only"}
+            </SecondaryButton>
+          </div>
+        </Fold>
+      ) : null}
+      <div className="res-hushrow">
+        <span className="res-hush"><Hush pose={style.pose} size={120} className="bob" /></span>
+        <Bubble className="res-after">{bubble}</Bubble>
+      </div>
+    </div>
   );
+}
+
+/* ---------- right: the creator's card ---------- */
+
+function CreatorCard({ auction, onDone }: { auction: AuctionView; onDone: () => void }) {
+  const { run, busy } = useRunner();
+  const { sale, quote } = auction;
+  const settled = auction.status === STATUS.Settled;
+  const raised = settled ? auction.clearingPrice * auction.totalSold : 0n;
+  const yourMoney = settled ? raised - auction.seedQuote : 0n;
+  const unsold = settled ? (auction.supplyLots - auction.totalSold) * auction.lotSize - auction.seedSale : auction.supply;
+  const done = auction.unsoldReclaimed && auction.proceedsReclaimed;
+  const percent = auction.supplyLots > 0n ? Number((auction.totalSold * 100n) / auction.supplyLots) : 0;
+  const pending = [
+    !auction.proceedsReclaimed && yourMoney > 0n ? money(yourMoney, quote) : null,
+    !auction.unsoldReclaimed && unsold > 0n ? tokens(unsold, sale) : null,
+  ].filter(Boolean).join(" and ");
+
+  return (
+    <div>
+      <div className="res-pop res-drop" style={{ "--loot-pop": "var(--color-cyan)" } as CSSProperties}>
+        <div className="loot res-loot res-creator" style={{ "--loot": "var(--color-magenta)" } as CSSProperties}>
+          {done ? <span className="res-stamp" aria-hidden="true">Collected</span> : null}
+          <div className="label">Your launch</div>
+          {settled ? (
+            <>
+              <h2 className="res-head !mt-3 !text-[18px]">You raised</h2>
+              <div className="res-raised res-slap"><RollMoney value={raised} quote={quote} /></div>
+              <p className="res-head !text-[17px]">{percent}% sold: {formatAmount(auction.totalSold * auction.lotSize, sale.decimals, 2)} of {tokens(auction.supply, sale)}</p>
+              <div className="mt-2"><Meter value={percent} max={100} label={`${percent}% sold`} /></div>
+            </>
+          ) : (
+            <>
+              <h2 className="loot-word shout res-slap m-0 uppercase">Called off</h2>
+              <p className="res-head">The unlock keys never came, so nobody paid anything. Your tokens come back.</p>
+            </>
+          )}
+          <div className="mt-4 grid gap-2.5">
+            {settled ? <div className="loot-line"><span>Your money</span><b><RollMoney value={yourMoney} quote={quote} /></b></div> : null}
+            <div className="loot-line"><span>{settled ? "Unsold tokens" : "Your tokens back"}</span><b><RollTokens value={unsold} sale={sale} /></b></div>
+            {settled && auction.seedState !== SEED.None ? (
+              <div className="loot-line"><span>Set aside for Kuru</span><b className="!text-[22px]">{money(auction.seedQuote, quote)} + {tokens(auction.seedSale, sale)}</b></div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+      <div className="mt-6 pr-2">
+        <PrimaryButton
+          className="w-full !text-[19px]"
+          icon={done ? "check" : "bag"}
+          disabled={busy !== null || done}
+          onClick={() => void run("Collect", (w) => callAuction(w, "reclaim", auction.id), pending ? `Collected. ${pending} ${pending.includes(" and ") ? "are" : "is"} in your wallet.` : "Collected.").then(onDone)}
+        >
+          {done ? "Nothing left to collect" : busy === "Collect" ? "Collecting…" : settled ? "Collect your money and unsold tokens" : "Collect your tokens"}
+        </PrimaryButton>
+      </div>
+      {!auction.proceedsReclaimed && !auction.unsoldReclaimed ? (
+        <Fold className="mt-4 px-1" title={<span className="text-[15px] text-muted">Trouble collecting?</span>}>
+          <p className="m-0 text-[15px] text-muted">If one token is paused or blocks your address, collect the other on its own.</p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            <SecondaryButton icon="dollar" disabled={busy !== null} onClick={() => void run("Money only", (w) => claimLeg(w, "reclaimProceeds", auction.id), `Collected. ${money(yourMoney, quote)} is in your wallet.`).then(onDone)}>
+              {busy === "Money only" ? "Collecting…" : "Money only"}
+            </SecondaryButton>
+            <SecondaryButton icon="coin" disabled={busy !== null} onClick={() => void run("Unsold tokens only", (w) => claimLeg(w, "reclaimUnsold", auction.id), `Collected. ${tokens(unsold, sale)} are in your wallet.`).then(onDone)}>
+              {busy === "Unsold tokens only" ? "Collecting…" : "Unsold tokens only"}
+            </SecondaryButton>
+          </div>
+        </Fold>
+      ) : null}
+      <div className="res-hushrow">
+        <span className="res-hush"><Hush pose={done ? "idle" : "excited"} size={120} className="bob" /></span>
+        <Bubble className="res-after">
+          {done ? <>All collected. It is in your wallet.</> : pending ? <>Nice launch. <b>{pending}</b> {pending.includes(" and ") ? "are" : "is"} yours, in one tap.</> : <>Nothing to collect yet.</>}
+        </Bubble>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- right: someone who did not bid ---------- */
+
+function VisitorCard({ auction, signedIn, trading }: { auction: AuctionView; signedIn: boolean; trading: boolean }) {
+  const { sale, quote } = auction;
+  return (
+    <div>
+      <div className="res-drop is-soft">
+        <Panel large accent className="res-neutral">
+          <div className="label">Your result</div>
+          <h2 className="loot-word m-0 uppercase">{signedIn ? "Just watching" : "Did you win?"}</h2>
+          <p className="mt-4 mb-0 max-w-[30em] text-[18px] text-muted">
+            {signedIn ? "This account did not bid in this launch, so there is nothing to collect here." : "Sign in to see if you won and to collect what is yours."}
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            {signedIn ? <SecondaryButton to="/" icon="grid">See live launches</SecondaryButton> : <SecondaryButton icon="fingerprint" onClick={openConnect}>Sign in</SecondaryButton>}
+            {signedIn ? <SecondaryButton to="/bids" icon="lock">My bids</SecondaryButton> : null}
+          </div>
+        </Panel>
+      </div>
+      <div className="res-hushrow">
+        <span className="res-hush"><Hush pose={signedIn ? "idle" : "waiting"} size={120} className="bob" /></span>
+        <Bubble className="res-after">
+          {trading
+            ? <>Missed it? <b>{sale.symbol}</b> trades on Kuru from <b>{priceText(auction.clearingPrice, quote)}</b>.</>
+            : <>Next time, lock a secret bid before bidding closes. Everyone who wins pays one price.</>}
+        </Bubble>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- bottom: every bid ---------- */
+
+function BidsTable({ auction, bids, account }: { auction: AuctionView; bids: readonly BidView[]; account: Address | null }) {
+  const [shown, setShown] = useState(10);
+  const outcome = outcomeOf(auction);
+  const { sale, quote } = auction;
+  const mineFirst = [...bids].sort((a, b) => Number(isMine(b, account)) - Number(isMine(a, account)));
+  return (
+    <div className="pb-4">
+      <div className="overflow-x-auto">
+        <table className="res-table">
+          <thead>
+            <tr><th>Who</th><th>Asked</th><th>Max price</th><th>Got</th><th>Paid</th></tr>
+          </thead>
+          <tbody>
+            {mineFirst.slice(0, shown).map((bid) => {
+              const mine = isMine(bid, account);
+              const lots = allocationOf({ counted: bid.counted, step: bid.step, quantity: bid.quantity, prefix: bid.prefix }, outcome);
+              return (
+                <tr key={bid.slot} className={mine ? "is-you" : ""}>
+                  <td className="addr">{shortAddress(bid.bidder)}{mine ? <span className="you">you</span> : null}</td>
+                  {bid.forfeited ? (
+                    <td colSpan={4} className="!text-coral">Cheating bid: money burned</td>
+                  ) : !bid.counted ? (
+                    <td colSpan={4} className="!text-muted">Did not count: full money back</td>
+                  ) : (
+                    <>
+                      <td className="n">{tokens(bid.quantity * auction.lotSize, sale)}</td>
+                      <td className="n">{priceText(priceAt(auction, bid.step), quote)}</td>
+                      <td className={`n ${lots > 0n ? "!text-green" : "!text-muted"}`}>{lots > 0n ? tokens(lots * auction.lotSize, sale) : "None"}</td>
+                      <td className="n">{money(lots * auction.clearingPrice, quote)}</td>
+                    </>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {bids.length > shown ? (
+        <div className="mt-4"><SecondaryButton icon="chevron-down" onClick={() => setShown((value) => value + 10)}>Show 10 more</SecondaryButton></div>
+      ) : null}
+    </div>
+  );
+}
+
+function isMine(bid: BidView, account: Address | null): boolean {
+  return account !== null && bid.bidder.toLowerCase() === account.toLowerCase();
 }

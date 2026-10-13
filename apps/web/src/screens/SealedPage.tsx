@@ -1,22 +1,26 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useSession } from "../auth/session";
 import { noteKey, openNote, readNote, type BidNote } from "../bids/vault";
 import { reads } from "../chain/clients";
 import { explorerUrl, network } from "../chain/config";
-import { formatDate } from "../chain/format";
-import { formatPrice, priceAt } from "../chain/model";
-import { Badge, GlassCard } from "../components/ui";
+import { formatDate, shortAddress } from "../chain/format";
+import { priceAt, type AuctionView } from "../chain/model";
+import { moneyText, priceText, Tip, tokensText, VerifyLinks } from "../components/auction";
+import { Bubble, CopyButton, Hush, Icon, Panel, Receipt, ReceiptRow, SecondaryButton, TokenArt, Tracker, timeLeft } from "../components/ui";
 import { friendlyError } from "../state/errors";
-import { usePolling } from "../state/hooks";
+import { useNow, usePolling } from "../state/hooks";
+import { calm } from "../state/motion";
 import { NotFound } from "./NotFound";
 
 export function SealedPage() {
   const { id } = useParams();
   const { state } = useLocation() as { state: { commitTx?: string } | null };
   const { signer, vaultKey } = useSession();
+  const now = useNow();
   const [note, setNote] = useState<BidNote | null>(null);
   const [noteError, setNoteError] = useState("");
+  const [opening, setOpening] = useState(false);
   const valid = id !== undefined && /^\d+$/.test(id) && reads !== null;
   const auctionId = valid ? BigInt(id) : 0n;
   const account = signer?.address ?? null;
@@ -29,13 +33,15 @@ export function SealedPage() {
     [auctionId, account],
   );
   if (!valid) return <NotFound />;
-  const auction = data?.auction;
-  const tx = state?.commitTx ? explorerUrl("tx", state.commitTx) : null;
+  const auction = data?.auction ?? null;
+  const commitTx = state?.commitTx ?? null;
+  const tx = commitTx ? explorerUrl("tx", commitTx) : null;
   const stored = signer?.kind === "passkey" && network.deployment
     ? readNote(localStorage, noteKey(network.chain.id, network.deployment.auction, signer.address, auctionId))
     : null;
 
   async function showNote() {
+    setOpening(true);
     try {
       const key = await vaultKey();
       const opened = key && stored ? await openNote(key, stored) : null;
@@ -43,38 +49,142 @@ export function SealedPage() {
       setNote(opened);
     } catch (error) {
       setNoteError(friendlyError(error));
+    } finally {
+      setOpening(false);
     }
   }
 
+  const closed = auction ? now >= auction.commitDeadline : false;
+
   return (
-    <div className="mx-auto max-w-3xl px-4 pb-20">
-      <Badge dot="teal">Bid sealed</Badge>
-      <h1 className="mt-5 text-5xl font-bold leading-[0.95] tracking-[-0.04em]">Done. Your bid opens itself.</h1>
-      <p className="mt-5 text-lg text-mist">
-        Your price and amount are encrypted to three independent keepers. After bidding closes, two of them publish their keys and the contract opens every bid on chain. You do not need to come back until it is time to claim.
-      </p>
-      <GlassCard className="mt-8">
-        <dl className="grid gap-3 text-sm">
-          <div className="flex justify-between gap-3"><dt className="text-lilac">Auction</dt><dd className="text-paper">{auction ? `${auction.id} · ${auction.sale.name}` : `#${id}`}</dd></div>
-          {data?.slot !== null && data?.slot !== undefined ? <div className="flex justify-between gap-3"><dt className="text-lilac">Your bid</dt><dd className="font-mono text-paper">#{data.slot} on chain</dd></div> : null}
-          {auction ? <div className="flex justify-between gap-3"><dt className="text-lilac">Bidding closes</dt><dd className="text-paper">{formatDate(auction.commitDeadline)}</dd></div> : null}
-          {tx ? <div className="flex justify-between gap-3"><dt className="text-lilac">Transaction</dt><dd><a className="text-amber" href={tx} target="_blank" rel="noreferrer">View ↗</a></dd></div> : null}
-        </dl>
-        {stored ? (
-          <div className="mt-5 border-t border-white/10 pt-4">
-            {note && auction ? (
-              <p className="text-paper">You bid for {note.lots} at most {formatPrice(priceAt(auction, note.step), auction, auction.sale, auction.quote)}. Only your passkey can open this note.</p>
-            ) : (
-              <button type="button" className="btn-secondary min-h-11" onClick={() => void showNote()}>Show what I bid (passkey)</button>
-            )}
-            {noteError ? <p className="mt-2 text-sm text-amber">{noteError}</p> : null}
-          </div>
-        ) : null}
-      </GlassCard>
-      <div className="mt-6 flex flex-wrap gap-3">
-        <Link className="btn-primary inline-flex items-center no-underline" to={`/auction/${id}`}><span className="relative z-10">Back to the auction</span></Link>
-        <Link className="btn-secondary inline-flex items-center no-underline" to="/bids">My bids</Link>
+    <div className="au-page au-sealed">
+      <Tracker now="bid" done className="rise" />
+
+      <div className="au-lock-hero rise d1">
+        <LockedHush />
+        <div className="min-w-0">
+          <h1 className="au-lock-title">Bid locked.</h1>
+          <p className="au-lock-sub">Nobody can see it. Not even us.</p>
+          <Bubble className="au-lock-bubble">Locked tight. <b>Even I can't peek.</b></Bubble>
+        </div>
       </div>
+
+      <div className="au-lock-grid">
+        <Panel className="au-lock-card rise d2">
+          <h2 className="label">What happens next</h2>
+          <ol className="au-next">
+            <li className={closed ? "is-done" : ""}>
+              <span className="n">{closed ? <Icon name="check" size={16} /> : 1}</span>
+              {auction
+                ? closed ? "Bidding has closed" : <span>Bidding closes in <b className="num text-yellow">{timeLeft(Number(auction.commitDeadline), Number(now))}</b></span>
+                : "Bidding closes"}
+            </li>
+            <li><span className="n">2</span>Bids unlock by themselves</li>
+            <li><span className="n">3</span>Come back to collect</li>
+          </ol>
+          <p className="au-ok"><Icon name="check" size={20} />You can leave. There's nothing else to do.</p>
+        </Panel>
+
+        <Panel className="au-lock-card rise d3">
+          <h2 className="label">Your bid</h2>
+          <dl className="au-lock-facts">
+            <div>
+              <dt>Launch</dt>
+              <dd>
+                {auction ? (
+                  <Link className="inline-flex items-center gap-2 no-underline hover:text-yellow" to={`/auction/${id}`}>
+                    <TokenArt address={auction.sale.address} size={28} />
+                    <span className="text-paper">{auction.sale.name}</span>
+                    <span className="num text-cyan">${auction.sale.symbol}</span>
+                  </Link>
+                ) : `#${id}`}
+              </dd>
+            </div>
+            {data?.slot !== null && data?.slot !== undefined ? (
+              <div><dt>Place in line</dt><dd className="num">#{data.slot + 1}</dd></div>
+            ) : null}
+            {auction ? <div><dt>Bidding closes</dt><dd>{formatDate(auction.commitDeadline)}</dd></div> : null}
+            {commitTx ? (
+              <div>
+                <dt>Transaction</dt>
+                <dd className="flex items-center justify-end gap-1">
+                  {tx ? (
+                    <a className="inline-flex items-center gap-1.5 no-underline" href={tx} target="_blank" rel="noreferrer">View <Icon name="external" size={14} /></a>
+                  ) : (
+                    <>
+                      <span className="font-mono text-[14px] text-muted">{shortAddress(commitTx)}</span>
+                      <CopyButton value={commitTx} />
+                    </>
+                  )}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+
+          {stored ? (
+            <div className="mt-4">
+              {note && auction ? <NoteReceipt auction={auction} note={note} /> : (
+                <SecondaryButton icon="fingerprint" disabled={opening} onClick={() => void showNote()}>
+                  {opening ? "Opening…" : "See what I bid"}
+                </SecondaryButton>
+              )}
+              {noteError ? <p className="au-help is-bad" role="alert">{noteError}</p> : null}
+            </div>
+          ) : (
+            <p className="au-help mt-4">Your price and amount are locked. Not even this page can read them.</p>
+          )}
+        </Panel>
+      </div>
+
+      <div className="au-lock-actions rise d3">
+        <SecondaryButton to={`/auction/${id}`} icon="chevron-left">Back to the launch</SecondaryButton>
+        <SecondaryButton to="/bids" icon="grid">My bids</SecondaryButton>
+      </div>
+
+      <Tip className="rise d4" />
+
+      {auction ? (
+        <div className="mt-8">
+          <VerifyLinks auction={auction} extra={commitTx ? [["Your bid transaction", tx]] : []} />
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+/** Hush, shackle up for a beat, then slammed shut with the LOCKED stamp. */
+function LockedHush() {
+  const ref = useRef<HTMLSpanElement>(null);
+  const still = calm();
+  useEffect(() => {
+    if (still) return;
+    const timer = window.setTimeout(() => ref.current?.querySelector("svg.hush")?.classList.remove("is-open"), 380);
+    return () => window.clearTimeout(timer);
+  }, [still]);
+  return (
+    <div className="au-lock-art">
+      <span className="au-speed" aria-hidden="true" />
+      <span ref={ref} className="relative inline-block leading-none">
+        <Hush pose="idle" open={!still} size={200} className="bob" />
+      </span>
+      <span className="au-stamp-sm" aria-hidden="true">Locked</span>
+    </div>
+  );
+}
+
+function NoteReceipt({ auction, note }: { auction: AuctionView; note: BidNote }) {
+  const lots = BigInt(note.lots);
+  const pay = priceAt(auction, note.step) * lots;
+  return (
+    <>
+      <Receipt title="What you bid" aside="only you can see this" className="au-note-receipt">
+        <ReceiptRow icon="coin" tone="cyan" label="You get up to" value={tokensText(auction, lots)} />
+        <ReceiptRow icon="dollar" tone="yellow" label="You pay at most" value={moneyText(pay, auction.quote)} />
+        <ReceiptRow icon="return" tone="green" label="Comes back for sure" value={moneyText(auction.deposit - pay, auction.quote)} />
+      </Receipt>
+      <p className="au-help mt-4">
+        You asked for {tokensText(auction, lots)} at up to {priceText(auction, priceAt(auction, note.step))}. Only your passkey can open this note.
+      </p>
+    </>
   );
 }
