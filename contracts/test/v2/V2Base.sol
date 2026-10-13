@@ -131,7 +131,18 @@ abstract contract V2Base is Test {
         auction.commit(id, s.ephemeral, s.c, s.h);
         vm.stopPrank();
         slot = auction.bidderSlot(id, bidder) - 1;
-        sealedOf[id][slot] = s;
+        _store(id, slot, s);
+    }
+
+    function _store(uint256 id, uint32 slot, Sealed memory s) internal {
+        Sealed storage stored = sealedOf[id][slot];
+        stored.ephemeral = s.ephemeral;
+        stored.c = s.c;
+        stored.h = s.h;
+        stored.m = s.m;
+        for (uint256 i = 0; i < 3; ++i) {
+            stored.shared[i] = s.shared[i];
+        }
     }
 
     function _bid(uint256 id, address bidder, uint256 step, uint256 quantity) internal returns (uint32) {
