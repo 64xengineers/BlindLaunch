@@ -47,3 +47,9 @@ Run: same fork command, test `test_contractCanCancelItsOwnRestingOrder`. Result:
 - `batchCancelOrders([id])` from the owning contract followed by `MarginAccount.withdraw(10e18, base)` returned the full deposit.
 - `bestBidAsk()` reports prices scaled to 18 decimals (`2.5e18` for price 25,000 at pricePrecision 1e4) and `type(uint256).max` as the best bid of an empty book. Do not compare it to `addSellOrder` prices without rescaling.
 - **Decision:** `MarketSeeder.seed` records each order id by reading `s_orderIdCounter()` right after posting; `unwind` cancels those ids itself. No log parsing is needed.
+
+## Kuru rounding on buy orders (Task 2.1)
+
+Found by `test/spike/MarketSeederFork.t.sol` on a testnet fork. A buy of size 10,004,001,600 at price 24,990 (sizePrecision 1e8, pricePrecision 1e4, 6-decimal quote) was debited **250,000,000** quote units when posted and refunded **249,999,900** when cancelled. Kuru charges `ceil(size·price/sizePrecision)` and refunds `floor(size·price/sizePrecision)`, each × `10^quoteDecimals / pricePrecision`, so 100 units stayed in Kuru.
+
+**Decision:** `MarketSeeder` rounds the bid size down to a multiple of `sizePrecision / gcd(bidPrice, sizePrecision)`, which makes `size·price` a multiple of `sizePrecision` and the post/cancel round trip exact. The fork test now checks the authority receives exactly the seeded quote plus fill proceeds after `unwind`. Fills by third parties at sizes we do not control can still leave Kuru-side dust in a taker's or maker's favour; that is Kuru's rounding, not ours.

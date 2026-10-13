@@ -1,0 +1,344 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+import {BlindAuctionV2} from "../../src/BlindAuctionV2.sol";
+import {IMarketSeeder} from "../../src/IMarketSeeder.sol";
+import {MarketSeeder} from "../../src/MarketSeeder.sol";
+import {IKuruMarginAccount, IKuruRouter} from "../../src/kuru/IKuru.sol";
+import {TestToken} from "../../src/TestToken.sol";
+import {MockKuruRouter, MockMarginAccount, MockOrderBook} from "./kuru/MockKuru.sol";
+import {V2Base} from "./V2Base.sol";
+
+/// @notice MarketSeeder against a Kuru mock with an 18-decimal sale token and a 6-decimal quote.
+///         Reference sale: ladder 2.5 to 3.0 tUSD per token, 1,000 tokens, bids 300 @ 3.0 and
+///         200 @ 2.5, so it clears at 2.5 with 500 sold; seed 100 tokens and 20% of 1,250 tUSD.
+contract MarketSeederTest is V2Base {
+    event MarketSeeded(
+        uint256 indexed auctionId,
+        address indexed market,
+        address vault,
+        uint32 askPrice,
+        uint96 askSize,
+        uint32 bidPrice,
+        uint96 bidSize
+    );
+
+    uint256 internal constant TOKEN = 1e18;
+    uint256 internal constant USD = 1e6;
+
+    MockMarginAccount internal kuruMargin;
+    MockKuruRouter internal kuruRouter;
+    MarketSeeder internal seeder;
+
+    function setUp() public override {
+        super.setUp();
+        sale = new TestToken("Moon", "MOON", 18);
+        quote = new TestToken("Test USD", "tUSD", 6);
+        sale.mint(authority, 10_000 * TOKEN);
+        vm.prank(authority);
+        sale.approve(address(auction), type(uint256).max);
+        kuruMargin = new MockMarginAccount();
+        kuruRouter = new MockKuruRouter(kuruMargin);
+        seeder = new MarketSeeder(
+            address(auction), IKuruRouter(address(kuruRouter)), IKuruMarginAccount(address(kuruMargin))
+        );
+        auction.setSeeder(seeder);
+    }
+
+    function _kuru() internal pure returns (MarketSeeder.KuruParams memory) {
+        return MarketSeeder.KuruParams({
+            sizePrecision: 1e8,
+            pricePrecision: 1e4,
+            tickSize: 10,
+            minSize: 1e6,
+            maxSize: 1e16,
+            takerFeeBps: 0,
+            makerFeeBps: 0,
+            kuruAmmSpread: 100
+        });
+    }
+
+    function _seededParams() internal view returns (BlindAuctionV2.CreateParams memory p) {
+        p = _params();
+        p.supply = 1000 * TOKEN;
+        p.lotSize = TOKEN;
+        p.minPrice = 2_500_000; // 2.5 tUSD per token
+        p.stepSize = 100_000; // 0.1 tUSD
+        p.stepCount = 6;
+        p.deposit = 10_000 * USD;
+        p.maxNotional = 10_000 * USD;
+        p.seedSaleLots = 100;
+        p.seedQuoteBps = 2_000;
+        p.seedLockUntil = p.cancelAfter + 7 days;
+        p.kuruParams = abi.encode(_kuru());
+    }
+
+    function _config(BlindAuctionV2.CreateParams memory p) internal view returns (IMarketSeeder.SeedConfig memory) {
+        return IMarketSeeder.SeedConfig({
+            saleToken: address(sale),
+            quoteToken: address(quote),
+            lotSize: p.lotSize,
+            minPrice: p.minPrice,
+            stepSize: p.stepSize,
+            stepCount: p.stepCount,
+            kuruParams: p.kuruParams
+        });
+    }
+
+    function _settled(BlindAuctionV2.CreateParams memory p) internal returns (uint256 id) {
+        id = _create(p);
+        _bid(id, alice, 5, 300);
+        _bid(id, bob, 0, 200);
+        _closeAndOpenAll(id);
+        auction.settle(id);
+    }
+
+    function _settled() internal returns (uint256) {
+        return _settled(_seededParams());
+    }
+
+    function _withKuru(BlindAuctionV2.CreateParams memory p, MarketSeeder.KuruParams memory k)
+        internal
+        pure
+        returns (BlindAuctionV2.CreateParams memory)
+    {
+        p.kuruParams = abi.encode(k);
+        return p;
+    }
+
+    // ------------------------------------------------------------------ validate (S1 to S4)
+
+    function test_validateAcceptsAnOnTickLadder() public view {
+        seeder.validate(_config(_seededParams()));
+    }
+
+    function test_validateRejectsOffTickLadders() public {
+        BlindAuctionV2.CreateParams memory p = _seededParams();
+        MarketSeeder.KuruParams memory k = _kuru();
+        k.tickSize = 300;
+        vm.expectRevert(MarketSeeder.OffTick.selector);
+        seeder.validate(_config(_withKuru(p, k)));
+
+        p = _seededParams();
+        p.minPrice = 2_500_001; // 25,000.01 in Kuru units: not a whole price
+        vm.expectRevert(MarketSeeder.OffTick.selector);
+        seeder.validate(_config(p));
+    }
+
+    function test_validateRejectsAFloorBelowTwoTicks() public {
+        BlindAuctionV2.CreateParams memory p = _seededParams();
+        p.minPrice = 100;
+        p.stepSize = 100;
+        MarketSeeder.KuruParams memory k = _kuru();
+        k.tickSize = 1;
+        vm.expectRevert(MarketSeeder.PriceTooLow.selector);
+        seeder.validate(_config(_withKuru(p, k)));
+    }
+
+    function test_validateRejectsPricesAboveUint32() public {
+        BlindAuctionV2.CreateParams memory p = _seededParams();
+        p.minPrice = 500_000 * USD;
+        vm.expectRevert(MarketSeeder.PriceTooHigh.selector);
+        seeder.validate(_config(p));
+    }
+
+    function test_validateRejectsBadKuruParams() public {
+        BlindAuctionV2.CreateParams memory p = _seededParams();
+        MarketSeeder.KuruParams memory k = _kuru();
+        k.sizePrecision = 0;
+        vm.expectRevert(MarketSeeder.BadParams.selector);
+        seeder.validate(_config(_withKuru(p, k)));
+        k = _kuru();
+        k.minSize = k.maxSize + 1;
+        vm.expectRevert(MarketSeeder.BadParams.selector);
+        seeder.validate(_config(_withKuru(p, k)));
+        k = _kuru();
+        k.kuruAmmSpread = 15;
+        vm.expectRevert(MarketSeeder.BadParams.selector);
+        seeder.validate(_config(_withKuru(p, k)));
+    }
+
+    function test_createRunsValidate() public {
+        BlindAuctionV2.CreateParams memory p = _seededParams();
+        MarketSeeder.KuruParams memory k = _kuru();
+        k.tickSize = 300;
+        _enqueueKeys();
+        vm.prank(authority);
+        vm.expectRevert(MarketSeeder.OffTick.selector);
+        auction.createAuction(_withKuru(p, k));
+    }
+
+    // ------------------------------------------------------------------ accept and seed (S5 to S11, S14)
+
+    function test_onlyTheAuctionCanHandOff() public {
+        IMarketSeeder.SeedOrder memory order;
+        vm.expectRevert(MarketSeeder.NotAuction.selector);
+        seeder.accept(order);
+    }
+
+    function test_handOffSeedsTheMarketAtTheClearingPrice() public {
+        uint256 id = _settled();
+        uint32 bidPrice = 24_990;
+        // Floor of 250 tUSD at 2.499 is 10,004,001,600; rounded down to a multiple of
+        // 1e8 / gcd(24_990, 1e8) = 1e7 so Kuru can refund it exactly: 100 tokens.
+        uint96 bidSize = 10_000_000_000;
+
+        vm.expectEmit(false, false, false, false, address(seeder));
+        emit MarketSeeded(id, address(0), address(0), 25_000, 100e8, bidPrice, bidSize);
+        auction.handOffSeed(id);
+
+        MarketSeeder.Position memory pos = seeder.positionOf(id);
+        assertTrue(pos.seeded);
+        assertEq(pos.saleAmount, 100 * TOKEN);
+        assertEq(pos.quoteAmount, 250 * USD);
+        MockOrderBook market = MockOrderBook(pos.market);
+        assertEq(address(market), address(kuruRouter.lastMarket()));
+
+        (address askOwner, uint96 askSize,,,, uint32 askPrice,, bool askIsBuy) = market.s_orders(pos.askId);
+        assertEq(askOwner, pos.vault);
+        assertEq(askPrice, 25_000, "ask at the clearing price, 2.5 tUSD");
+        assertEq(askSize, 100e8, "all 100 seeded tokens");
+        assertFalse(askIsBuy);
+
+        (address bidOwner, uint96 postedBidSize,,,, uint32 postedBidPrice,, bool bidIsBuy) = market.s_orders(pos.bidId);
+        assertEq(bidOwner, pos.vault);
+        assertEq(postedBidPrice, bidPrice, "bid one tick below");
+        assertEq(postedBidSize, bidSize);
+        assertTrue(bidIsBuy);
+        assertLe(market.quoteAmount(bidSize, bidPrice), 250 * USD, "bid never needs more quote than seeded");
+        assertEq((uint256(bidSize) * bidPrice) % 1e8, 0, "size x price is a whole number of Kuru quote units");
+
+        assertEq(sale.balanceOf(address(seeder)), 0);
+        assertEq(quote.balanceOf(address(seeder)), 0);
+        assertEq(sale.balanceOf(pos.vault), 0, "everything deposited into the margin account");
+    }
+
+    function test_acceptOnlyOncePerAuction() public {
+        uint256 id = _settled();
+        auction.handOffSeed(id);
+        IMarketSeeder.SeedOrder memory order;
+        order.auctionId = id;
+        vm.prank(address(auction));
+        vm.expectRevert(MarketSeeder.AlreadyAccepted.selector);
+        seeder.accept(order);
+    }
+
+    function test_reusesTheMarketForTheSamePairAndParams() public {
+        uint256 first = _settled();
+        auction.handOffSeed(first);
+        uint256 second = _create(_seededParams());
+        _bid(second, cara, 1, 400);
+        _closeAndOpenAll(second);
+        auction.settle(second);
+        auction.handOffSeed(second);
+        assertEq(kuruRouter.deployCount(), 1);
+        assertEq(seeder.positionOf(first).market, seeder.positionOf(second).market);
+        assertTrue(seeder.positionOf(first).vault != seeder.positionOf(second).vault, "one vault per auction");
+    }
+
+    function test_skipsASideBelowTheMinimumSize() public {
+        BlindAuctionV2.CreateParams memory p = _seededParams();
+        p.seedSaleLots = 5;
+        MarketSeeder.KuruParams memory k = _kuru();
+        k.minSize = 1e9; // 10 tokens
+        uint256 id = _settled(_withKuru(p, k));
+        auction.handOffSeed(id);
+        MarketSeeder.Position memory pos = seeder.positionOf(id);
+        assertEq(pos.askId, 0, "5 tokens is below the minimum size");
+        assertTrue(pos.bidId != 0);
+    }
+
+    function test_seedOnlyOnce() public {
+        uint256 id = _settled();
+        auction.handOffSeed(id);
+        vm.expectRevert(MarketSeeder.AlreadySeeded.selector);
+        seeder.seed(id);
+    }
+
+    function test_kuruFailureDoesNotBlockTheHandOffAndSeedCanBeRetried() public {
+        uint256 id = _settled();
+        kuruRouter.setFailDeploy(true);
+        auction.handOffSeed(id);
+        assertEq(uint256(auction.getAuction(id).seedState), uint256(BlindAuctionV2.SeedState.HandedOff));
+        assertFalse(seeder.positionOf(id).seeded);
+        assertEq(quote.balanceOf(address(seeder)), 250 * USD, "funds wait in the seeder");
+
+        kuruRouter.setFailDeploy(false);
+        vm.prank(makeAddr("keeper"));
+        seeder.seed(id);
+        assertTrue(seeder.positionOf(id).seeded);
+    }
+
+    // ------------------------------------------------------------------ unwind (S12, S13, S15)
+
+    function test_unwindWaitsForTheLock() public {
+        uint256 id = _settled();
+        auction.handOffSeed(id);
+        vm.expectRevert(MarketSeeder.Locked.selector);
+        seeder.unwind(id);
+    }
+
+    function test_unwindAfterAPartialFillPaysEverythingToTheAuthority() public {
+        uint256 id = _settled();
+        auction.handOffSeed(id);
+        MarketSeeder.Position memory pos = seeder.positionOf(id);
+        MockOrderBook market = MockOrderBook(pos.market);
+
+        // A taker buys 40 of the 100 seeded tokens at 2.5: the vault earns 100 tUSD.
+        quote.mint(address(kuruMargin), 100 * USD);
+        market.fill(pos.askId, 40e8);
+
+        uint256 saleBefore = sale.balanceOf(authority);
+        uint256 quoteBefore = quote.balanceOf(authority);
+        vm.warp(pos.lockUntil);
+        vm.prank(makeAddr("anyone"));
+        seeder.unwind(id);
+
+        assertEq(sale.balanceOf(authority) - saleBefore, 60 * TOKEN, "unsold seed tokens back");
+        assertEq(quote.balanceOf(authority) - quoteBefore, 350 * USD, "seeded quote plus fill proceeds");
+        assertEq(sale.balanceOf(pos.vault), 0);
+        assertEq(quote.balanceOf(pos.vault), 0);
+        assertEq(kuruMargin.getBalance(pos.vault, address(sale)), 0);
+        assertEq(kuruMargin.getBalance(pos.vault, address(quote)), 0);
+        vm.expectRevert(MarketSeeder.AlreadyUnwound.selector);
+        seeder.unwind(id);
+    }
+
+    function test_unwindReturnsANeverSeededPosition() public {
+        uint256 id = _settled();
+        kuruRouter.setFailDeploy(true);
+        auction.handOffSeed(id);
+        uint256 saleBefore = sale.balanceOf(authority);
+        vm.warp(seeder.positionOf(id).lockUntil);
+        seeder.unwind(id);
+        assertEq(sale.balanceOf(authority) - saleBefore, 100 * TOKEN);
+        assertEq(quote.balanceOf(authority), 250 * USD);
+        assertEq(quote.balanceOf(address(seeder)), 0);
+        vm.expectRevert(MarketSeeder.AlreadySeeded.selector);
+        seeder.seed(id);
+    }
+
+    function test_unwindOfAnUnknownAuctionReverts() public {
+        vm.expectRevert(MarketSeeder.NotAccepted.selector);
+        seeder.unwind(42);
+        vm.expectRevert(MarketSeeder.NotAccepted.selector);
+        seeder.seed(42);
+    }
+
+    // ------------------------------------------------------------------ solvency end to end
+
+    function test_everyoneIsPaidAndNothingIsLeftBehind() public {
+        uint256 id = _settled();
+        auction.handOffSeed(id);
+        _claim(id, alice, 300 * TOKEN, 10_000 * USD - 300 * 2_500_000);
+        _claim(id, bob, 200 * TOKEN, 10_000 * USD - 200 * 2_500_000);
+        vm.prank(authority);
+        auction.reclaim(id);
+        vm.warp(seeder.positionOf(id).lockUntil);
+        seeder.unwind(id);
+        assertEq(sale.balanceOf(address(auction)), 0);
+        assertEq(quote.balanceOf(address(auction)), 0);
+        assertEq(sale.balanceOf(authority), 10_000 * TOKEN - 500 * TOKEN, "authority keeps everything unsold");
+        assertEq(quote.balanceOf(authority), 500 * 2_500_000, "and all proceeds, after the unwind");
+    }
+}
