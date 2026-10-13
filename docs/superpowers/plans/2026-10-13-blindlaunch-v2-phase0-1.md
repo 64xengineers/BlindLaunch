@@ -1828,6 +1828,11 @@ contract Secp256k1Test is Test {
         return Secp256k1.Point(wallet.publicKeyX, wallet.publicKeyY);
     }
 
+    function test_constantsMatchTheCurve() public pure {
+        assertEq(Secp256k1.P, type(uint256).max - (2 ** 32) - 976, "p = 2^256 - 2^32 - 977");
+        assertEq(mulmod(2, Secp256k1.INV2, N), 1, "INV2 * 2 = 1 mod n");
+    }
+
     function test_generatorIsValid() public view {
         assertTrue(lib.isValid(Secp256k1.generator()));
     }
@@ -1924,7 +1929,7 @@ library Secp256k1 {
         uint256 y;
     }
 
-    uint256 internal constant P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F;
+    uint256 internal constant P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F;
     uint256 internal constant N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
     uint256 internal constant GX = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798;
     uint256 internal constant GY = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8;
@@ -1971,7 +1976,7 @@ library Secp256k1 {
 - [ ] **Step 4: Run to see it pass**
 
 Run: `cd contracts && forge test --match-path test/v2/Secp256k1.t.sol; cd ..`
-Expected: `9 tests passed` (fuzz tests at 256 runs each).
+Expected: `10 tests passed` (fuzz tests at 256 runs each).
 
 - [ ] **Step 5: Verify the INV2 literal independently**
 
