@@ -2573,6 +2573,51 @@ export const marketSeederAbi = [
   },
   {
     "type": "function",
+    "name": "unwindQuote",
+    "inputs": [
+      {
+        "name": "auctionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unwindSale",
+    "inputs": [
+      {
+        "name": "auctionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unwoundLegs",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "validate",
     "inputs": [
       {
@@ -2783,6 +2828,11 @@ export const marketSeederAbi = [
   },
   {
     "type": "error",
+    "name": "OnlyCreatorForOtherMarket",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PriceTooHigh",
     "inputs": []
   },
@@ -2794,6 +2844,11 @@ export const marketSeederAbi = [
   {
     "type": "error",
     "name": "Reentrancy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedExpired",
     "inputs": []
   },
   {

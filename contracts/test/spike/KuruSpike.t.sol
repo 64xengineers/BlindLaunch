@@ -104,6 +104,13 @@ contract SpikeTrader {
         return router.deployProxy(0, base, quote, 1e8, 1e4, 1, 1e6, 1e16, 0, 0, 100);
     }
 
+    function deployWith(IKuruRouter router, address base, address quote, uint256 takerFeeBps, uint256 makerFeeBps)
+        external
+        returns (address)
+    {
+        return router.deployProxy(0, base, quote, 1e8, 1e4, 10, 1e6, 1e16, takerFeeBps, makerFeeBps, 100);
+    }
+
     function deposit(SpikeToken token, uint256 amount) external {
         token.approve(address(margin), amount);
         margin.deposit(address(this), address(token), amount);
@@ -115,6 +122,14 @@ contract SpikeTrader {
 
     function buy(IKuruOrderBook book, uint32 price, uint96 size) external {
         book.addBuyOrder(price, size, false);
+    }
+
+    function buyPostOnly(IKuruOrderBook book, uint32 price, uint96 size) external {
+        book.addBuyOrder(price, size, true);
+    }
+
+    function sellTaker(IKuruOrderBook book, uint32 price, uint96 size) external {
+        book.addSellOrder(price, size, false);
     }
 
     function withdraw(SpikeToken token, uint256 amount) external {
@@ -222,5 +237,91 @@ contract KuruSpikeTest is Test {
         seller.cancel(book, orderId);
         seller.withdraw(base, 10e18);
         assertEq(base.balanceOf(address(seller)), 10e18, "deposit returned after cancel");
+    }
+
+    /// @dev Creates a market for a fresh pair with these settings, as the Router owner on mainnet.
+    function _deploys(uint96 sp, uint32 pp, uint32 tick, uint96 minSize, uint96 maxSize, uint256 taker, uint256 maker, uint96 spread)
+        internal
+        returns (bool ok)
+    {
+        SpikeToken base = new SpikeToken("Rule Base", "RB", 18);
+        SpikeToken quote = new SpikeToken("Rule Quote", "RQ", 6);
+        if (block.chainid == 143) {
+            (, bytes memory owner) = address(kuruRouter).staticcall(abi.encodeWithSignature("owner()"));
+            vm.prank(abi.decode(owner, (address)));
+        }
+        (ok,) = address(kuruRouter).call(
+            abi.encodeCall(
+                IKuruRouter.deployProxy,
+                (0, address(base), address(quote), sp, pp, tick, minSize, maxSize, taker, maker, spread)
+            )
+        );
+    }
+
+    /// The settings Kuru's Router rejects, which `MarketSeeder._decode` mirrors so that a declared
+    /// seed can always open its market: precisions that are not powers of ten, a zero tick or
+    /// minimum size, a maximum not above the minimum, a maker fee above the taker fee, a taker fee
+    /// of 100%, and an AMM spread outside 10 to 490 bps in steps of 10.
+    function test_routerRejectsSettings() public {
+        assertTrue(_deploys(1e8, 1e4, 1, 1e6, 1e16, 0, 0, 10), "spread 10");
+        assertTrue(_deploys(1e8, 1e4, 1, 1e6, 1e16, 0, 0, 490), "spread 490");
+        assertTrue(_deploys(1e8, 1e4, 1, 1e6, 1e6 + 1, 9_999, 9_999, 100), "max just above min, fees 9,999");
+        assertTrue(_deploys(1, 1, 7, 1, 1e16, 0, 0, 100), "precisions of 10^0, any non-zero tick");
+
+        assertFalse(_deploys(1e8, 1e4, 1, 1e6, 1e16, 0, 0, 500), "spread 500");
+        assertFalse(_deploys(1e8, 1e4, 1, 1e6, 1e16, 0, 0, 5), "spread 5");
+        assertFalse(_deploys(1e8, 1e4, 1, 1e6, 1e16, 0, 0, 15), "spread 15");
+        assertFalse(_deploys(1e8, 1e4, 1, 1e6, 1e16, 0, 10, 100), "maker fee above taker fee");
+        assertFalse(_deploys(1e8, 1e4, 1, 1e6, 1e16, 10_000, 0, 100), "taker fee 100%");
+        assertFalse(_deploys(1e8, 1e4, 1, 1e6, 1e6, 0, 0, 100), "max equal to min");
+        assertFalse(_deploys(1e8, 1e4, 1, 0, 1e16, 0, 0, 100), "min 0");
+        assertFalse(_deploys(1e8, 1e4, 0, 1e6, 1e16, 0, 0, 100), "tick 0");
+        assertFalse(_deploys(1e8, 3e4, 1, 1e6, 1e16, 0, 0, 100), "price precision 3e4");
+        assertFalse(_deploys(3e8, 1e4, 1, 1e6, 1e16, 0, 0, 100), "size precision 3e8");
+    }
+
+    /// Why MarketSeeder's orders are not post-only and how it reads their ids: a post-only order
+    /// that would cross reverts; an order that fills in full gets no id; a remainder that rests gets
+    /// the next one. Taker fees come out of what the taker receives, never on top of what it pays.
+    function test_crossingOrdersAndTheirIds() public {
+        SpikeToken base = new SpikeToken("Spike Base", "SBASE", 18);
+        SpikeToken quote = new SpikeToken("Spike Quote", "SQUOTE", 6);
+        SpikeTrader seller = new SpikeTrader(kuruMargin);
+        SpikeTrader buyer = new SpikeTrader(kuruMargin);
+        address market;
+        if (block.chainid == 143) {
+            (, bytes memory owner) = address(kuruRouter).staticcall(abi.encodeWithSignature("owner()"));
+            vm.prank(abi.decode(owner, (address)));
+            market = kuruRouter.deployProxy(0, address(base), address(quote), 1e8, 1e4, 10, 1e6, 1e16, 30, 10, 100);
+        } else {
+            market = seller.deployWith(kuruRouter, address(base), address(quote), 30, 10);
+        }
+        IKuruOrderBook book = IKuruOrderBook(market);
+        base.mint(address(seller), 100e18);
+        seller.deposit(base, 100e18);
+        seller.sell(book, 25_000, 10e8);
+        assertEq(book.s_orderIdCounter(), 1);
+
+        quote.mint(address(buyer), 25e6);
+        buyer.deposit(quote, 25e6);
+        vm.expectRevert();
+        buyer.buyPostOnly(book, 25_000, 1e8);
+
+        buyer.buy(book, 25_000, 4e8);
+        assertEq(book.s_orderIdCounter(), 1, "filled in full: no new id");
+        buyer.buy(book, 25_000, 6e8);
+        assertEq(book.s_orderIdCounter(), 1, "the ask is used up, still no new id");
+        buyer.withdraw(base, 9.97e18);
+        assertEq(base.balanceOf(address(buyer)), 9.97e18, "10 tokens less the 30 bps taker fee");
+
+        quote.mint(address(buyer), 10e6);
+        buyer.deposit(quote, 10e6);
+        buyer.buy(book, 25_000, 4e8);
+        assertEq(book.s_orderIdCounter(), 2, "a resting order gets the next id");
+        (address owner, uint96 size,,,, uint32 price,, bool isBuy) = book.s_orders(2);
+        assertEq(owner, address(buyer));
+        assertEq(size, 4e8);
+        assertEq(price, 25_000);
+        assertTrue(isBuy);
     }
 }

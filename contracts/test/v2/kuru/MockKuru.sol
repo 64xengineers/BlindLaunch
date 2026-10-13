@@ -5,7 +5,10 @@ import {IERC20} from "../../../src/IERC20.sol";
 
 /// @dev In-memory stand-ins for Kuru's Router, MarginAccount and OrderBook, faithful to the
 ///      units the testnet spike measured: price = human quote-per-base × pricePrecision,
-///      size = human base × sizePrecision. No matching engine: `fill` simulates a taker.
+///      size = human base × sizePrecision. A small matching engine mirrors what the spike saw:
+///      an order that crosses resting ones fills against them at their prices, best first; a
+///      post-only order that would cross reverts `PostOnlyError`; only a remainder that rests gets
+///      an id. Fees are not modelled. `fill` simulates an outside taker.
 contract MockMarginAccount {
     mapping(address => mapping(address => uint256)) public getBalance;
 
@@ -29,6 +32,8 @@ contract MockMarginAccount {
 }
 
 contract MockOrderBook {
+    error PostOnlyError();
+
     struct Config {
         address base;
         address quote;
@@ -77,16 +82,63 @@ contract MockOrderBook {
         require(size >= config.minSize && size <= config.maxSize, "size");
     }
 
-    function addSellOrder(uint32 price, uint96 size, bool) external {
+    function addSellOrder(uint32 price, uint96 size, bool postOnly) external {
         _check(price, size);
-        margin.debit(msg.sender, config.base, baseAmount(size));
-        _orders[++s_orderIdCounter] = Order(msg.sender, size, price, false);
+        uint96 left = _match(msg.sender, false, price, size, postOnly);
+        if (left == 0) return;
+        margin.debit(msg.sender, config.base, baseAmount(left));
+        _orders[++s_orderIdCounter] = Order(msg.sender, left, price, false);
     }
 
-    function addBuyOrder(uint32 price, uint96 size, bool) external {
+    function addBuyOrder(uint32 price, uint96 size, bool postOnly) external {
         _check(price, size);
-        margin.debit(msg.sender, config.quote, quoteAmount(size, price));
-        _orders[++s_orderIdCounter] = Order(msg.sender, size, price, true);
+        uint96 left = _match(msg.sender, true, price, size, postOnly);
+        if (left == 0) return;
+        margin.debit(msg.sender, config.quote, quoteAmount(left, price));
+        _orders[++s_orderIdCounter] = Order(msg.sender, left, price, true);
+    }
+
+    /// @dev Fills the incoming order against crossing resting orders at their prices, best first,
+    ///      and returns what is left to rest.
+    function _match(address taker, bool isBuy, uint32 price, uint96 size, bool postOnly)
+        internal
+        returns (uint96 left)
+    {
+        left = size;
+        while (left != 0) {
+            uint40 best = _bestCrossing(isBuy, price);
+            if (best == 0) break;
+            if (postOnly) revert PostOnlyError();
+            Order storage maker = _orders[best];
+            uint96 filled = left < maker.size ? left : maker.size;
+            uint256 base = baseAmount(filled);
+            uint256 quoteValue = quoteAmount(filled, maker.price);
+            if (isBuy) {
+                margin.debit(taker, config.quote, quoteValue);
+                margin.credit(taker, config.base, base);
+                margin.credit(maker.owner, config.quote, quoteValue);
+            } else {
+                margin.debit(taker, config.base, base);
+                margin.credit(taker, config.quote, quoteValue);
+                margin.credit(maker.owner, config.base, base);
+            }
+            maker.size -= filled;
+            if (maker.size == 0) delete _orders[best];
+            left -= filled;
+        }
+    }
+
+    function _bestCrossing(bool isBuy, uint32 price) internal view returns (uint40 best) {
+        uint32 bestPrice;
+        for (uint40 id = 1; id <= s_orderIdCounter; ++id) {
+            Order storage order = _orders[id];
+            if (order.size == 0 || order.isBuy == isBuy) continue;
+            if (isBuy ? order.price > price : order.price < price) continue;
+            if (best == 0 || (isBuy ? order.price < bestPrice : order.price > bestPrice)) {
+                best = id;
+                bestPrice = order.price;
+            }
+        }
     }
 
     function batchCancelOrders(uint40[] calldata orderIds) external {

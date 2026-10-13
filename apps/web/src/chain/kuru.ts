@@ -31,9 +31,19 @@ export function kuruPriceOf(price: bigint, ladder: SeedLadder, pricePrecision: n
   return numerator % denominator === 0n ? numerator / denominator : null;
 }
 
+/** 10^n for some n >= 0, as Kuru requires of both precisions. */
+export function isPowerOfTen(value: bigint | number): boolean {
+  if (typeof value === "number" && !Number.isSafeInteger(value)) return false;
+  let rest = BigInt(value);
+  if (rest <= 0n) return false;
+  while (rest % 10n === 0n) rest /= 10n;
+  return rest === 1n;
+}
+
 /**
  * Market parameters for a ladder: price precision of up to 9 quote decimals, a power-of-ten tick
- * near 10 bps of the floor that every ladder price lands on, 8 size decimals, Kuru's default fees.
+ * near 10 bps of the floor that every ladder price lands on, 8 size decimals, Kuru's default fees,
+ * and a largest order above the smallest.
  */
 export function suggestKuruParams(ladder: SeedLadder, supply: bigint): KuruParams {
   const pricePrecision = 10 ** Math.min(ladder.quoteDecimals, 9);
@@ -46,22 +56,29 @@ export function suggestKuruParams(ladder: SeedLadder, supply: bigint): KuruParam
   const minSize = sizePrecision >= 100n ? sizePrecision / 100n : 1n;
   let maxSize = (supply * sizePrecision) / 10n ** BigInt(ladder.saleDecimals);
   if (maxSize > UINT96_MAX) maxSize = UINT96_MAX;
-  if (maxSize < minSize) maxSize = minSize;
+  // Kuru wants the largest order strictly above the smallest, even for a supply under one minimum order.
+  if (maxSize <= minSize) maxSize = minSize * 10n;
   return { sizePrecision, pricePrecision, tickSize: Number(tick), minSize, maxSize, takerFeeBps: 30n, makerFeeBps: 10n, kuruAmmSpread: 100n };
 }
 
-/** Mirrors `MarketSeeder.validate`, so a bad ladder is reported in the form, not as a revert. */
+/**
+ * Mirrors `MarketSeeder.validate` (and the Kuru Router rules its `_decode` copies), so a bad ladder
+ * is reported in the form, not as a revert.
+ */
 export function kuruProblem(ladder: SeedLadder, k: KuruParams): string | null {
   if (k.sizePrecision === 0n || k.pricePrecision === 0 || k.tickSize === 0 || k.minSize === 0n) return "Kuru parameters must be non-zero.";
-  if (k.minSize > k.maxSize) return "Kuru minimum order size is above the maximum.";
-  if (k.takerFeeBps > 10_000n || k.makerFeeBps > 10_000n) return "Kuru fees must be at most 100%.";
-  if (k.kuruAmmSpread < 10n || k.kuruAmmSpread > 500n || k.kuruAmmSpread % 10n !== 0n) return "Kuru AMM spread must be 10 to 500 bps in steps of 10.";
+  if (!isPowerOfTen(k.sizePrecision) || !isPowerOfTen(k.pricePrecision)) return "Kuru price and size precision must be powers of ten.";
+  if (k.maxSize <= k.minSize) return "Kuru maximum order size must be above the minimum.";
+  if (k.takerFeeBps >= 10_000n) return "Kuru fees must be under 100%.";
+  if (k.makerFeeBps > k.takerFeeBps) return "Kuru maker fee must be at most the taker fee.";
+  if (k.kuruAmmSpread < 10n || k.kuruAmmSpread >= 500n || k.kuruAmmSpread % 10n !== 0n) return "Kuru AMM spread must be 10 to 490 bps in steps of 10.";
   if (ladder.saleDecimals > 36 || ladder.quoteDecimals > 36) return "Tokens with more than 36 decimals are not supported.";
   const tick = BigInt(k.tickSize);
   for (let step = 0; step < ladder.stepCount; step += 1) {
     const kuruPrice = kuruPriceOf(ladder.minPrice + BigInt(step) * ladder.stepSize, ladder, k.pricePrecision);
     if (kuruPrice === null) return "A ladder price cannot be expressed exactly on Kuru. Use fewer decimals.";
-    if (kuruPrice > UINT32_MAX) return "The top price is too high for a Kuru market.";
+    // Like MarketSeeder, a Kuru price must stay strictly below 2^32 - 1.
+    if (kuruPrice >= UINT32_MAX) return "The top price is too high for a Kuru market.";
     if (kuruPrice % tick !== 0n) return "A ladder price falls between Kuru ticks.";
     if (step === 0 && kuruPrice < 2n * tick) return "The lowest price must be at least two Kuru ticks.";
   }

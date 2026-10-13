@@ -9,7 +9,7 @@ import { explorerUrl, network } from "../chain/config";
 import { formatAmount, shortAddress } from "../chain/format";
 import { lotLabel, phaseOf, priceAt, SEED, STATUS, type AuctionView, type BidView, type TokenMeta } from "../chain/model";
 import { outcomeOf, VerifyLinks } from "../components/auction";
-import { Bubble, CopyButton, Fold, Hush, Icon, Meter, Panel, PrimaryButton, SecondaryButton, Stat, TokenArt, Tracker } from "../components/ui";
+import { Bubble, CopyButton, Fold, Hush, Icon, Meter, Panel, PrimaryButton, SecondaryButton, Stat, TokenArt, Tracker, type TrackerStage } from "../components/ui";
 import { callAuction, claimLeg, openMarket, seedCall, seedIntoMarket } from "../state/actions";
 import { useNow, usePolling, useRunner } from "../state/hooks";
 import { calm, confetti, useCountUp, useDecode } from "../state/motion";
@@ -102,6 +102,38 @@ export function ResultPage() {
 
 type Position = Awaited<ReturnType<NonNullable<typeof reads>["position"]>>;
 
+/* ---------- what the launch put on Kuru ---------- */
+
+/** What the seeded market holds from this launch: an ask at the final price, only the bid one tick below it, or no order. */
+export type KuruOffer = "ask" | "bid" | "none";
+
+/** Read from the position, not the plan: a sold-out launch has no tokens left to list, so Kuru gets only the bid. Null while no seeded market trades. */
+export function kuruOffer(position: Pick<Position, "seeded" | "unwound" | "askId" | "bidId">): KuruOffer | null {
+  if (!position.seeded || position.unwound) return null;
+  return position.askId !== 0 ? "ask" : position.bidId !== 0 ? "bid" : "none";
+}
+
+/** The tracker reaches Trading only for a market that really opened; a seed returned unopened stays at Result. */
+export function resultTracker(position: Pick<Position, "seeded" | "unwound">): { now: TrackerStage; done: boolean } {
+  return position.seeded ? { now: "trading", done: position.unwound } : { now: "result", done: false };
+}
+
+/** The line about buying on Kuru. It names a buy price only when the launch listed tokens for sale there. */
+export function KuruLine({ offer, sale, price }: { offer: KuruOffer; sale: TokenMeta; price: string }) {
+  if (offer === "ask") return <><b>{sale.symbol}</b> trades on Kuru from <b className="num">{price}</b>.</>;
+  if (offer === "bid") return <>Kuru only got a buy order for <b>{sale.symbol}</b>, one tick below <b className="num">{price}</b>.</>;
+  return <>Kuru got no orders from this launch: what was set aside was too small for a Kuru order.</>;
+}
+
+/** Help under the market field: any Kuru market for the pair will do, whatever its settings, if the final price fits it; one with other settings is the creator's call. */
+export function kuruMarketHelp(kuruOnly: boolean, sale: TokenMeta, quote: TokenMeta, price: string): string {
+  const pair = `${sale.symbol}/${quote.symbol}`;
+  const fits = `its settings don't need to match this launch: the sell order goes in at ${price}, or the next price step Kuru allows above it. A market with different settings can only be used by the creator.`;
+  return kuruOnly
+    ? `On Monad mainnet only Kuru can create a new market. Once Kuru lists ${pair}, paste that market's address here: ${fits}`
+    : `Kuru already lists ${pair}? Paste that market's address here instead: ${fits}`;
+}
+
 function ResultScreen({ id }: { id: bigint }) {
   const { signer } = useSession();
   const account = signer?.address ?? null;
@@ -139,14 +171,15 @@ function ResultScreen({ id }: { id: bigint }) {
   const market = position.seeded ? explorerUrl("address", position.market) : null;
   const bid = slot !== null ? bids[slot] ?? null : null;
   const loot = bid && claimable ? lootOf(auction, bid) : null;
-  const trading = position.seeded && !position.unwound;
+  const offer = kuruOffer(position);
+  const tracker = resultTracker(position);
   const soldPercent = auction.supplyLots > 0n ? (auction.totalSold * 100n) / auction.supplyLots : 0n;
 
   return (
     <div className="mx-auto max-w-[1360px] px-4 pb-24 sm:px-6 lg:px-8">
       <div className="res-grid">
         <section aria-labelledby="res-title" className="min-w-0">
-          <Tracker className="res-track" now={trading || position.unwound ? "trading" : "result"} bad={!settled} done={position.unwound} />
+          <Tracker className="res-track" now={tracker.now} bad={!settled} done={tracker.done} />
           <PriceHero auction={auction} settled={settled} loot={loot} />
           <div className="res-stats mt-7 grid grid-cols-3 gap-3">
             <Stat label="Sold" tone="cyan" value={<Rolling value={soldPercent} decimals={0} exact={`${soldPercent}%`} approx={(shown) => `${Math.round(shown)}%`} delay={500} />} />
@@ -161,9 +194,9 @@ function ResultScreen({ id }: { id: bigint }) {
           {isAuthority ? (
             <CreatorCard auction={auction} onDone={reload} />
           ) : loot && claimable ? (
-            <LootCard auction={auction} loot={loot} claimable={claimable} trading={trading} onDone={reload} />
+            <LootCard auction={auction} loot={loot} claimable={claimable} offer={offer} onDone={reload} />
           ) : (
-            <VisitorCard auction={auction} signedIn={account !== null} trading={trading} />
+            <VisitorCard auction={auction} signedIn={account !== null} offer={offer} />
           )}
         </section>
       </div>
@@ -238,13 +271,64 @@ function PriceHero({ auction, settled, loot }: { auction: AuctionView; settled: 
 
 /* ---------- left: Kuru and forfeits ---------- */
 
+type KuruStatus = { tone: string; icon: Parameters<typeof Icon>[0]["name"]; title: string; body: ReactNode; note: ReactNode };
+
+/** What the Kuru card says, from the auction's seed state and the seeder's position. */
+export function kuruStatus(
+  auction: AuctionView,
+  position: Pick<Position, "accepted" | "seeded" | "unwound" | "askId" | "bidId">,
+  now: bigint,
+  kuruOnly: boolean,
+): KuruStatus {
+  const { sale, quote } = auction;
+  const locked = now < auction.seedLockUntil;
+  const reserved = auction.seedState === SEED.Reserved;
+  const waiting = auction.seedState === SEED.HandedOff && position.accepted && !position.seeded && !position.unwound;
+  const offer = kuruOffer(position);
+  const canUnwind = position.accepted && !position.unwound && !locked;
+  const price = priceText(auction.clearingPrice, quote);
+  const setAside = `${tokens(auction.seedSale, sale)} and ${money(auction.seedQuote, quote)}`;
+  const violet = "var(--color-violet)";
+  if (position.unwound && !position.seeded) {
+    // `unwind` also returns a position that was never seeded: no market ever traded.
+    return { tone: violet, icon: "return", title: "Trading never started", body: "The lock ended first, so the tokens and money set aside for Kuru went back to the creator.", note: null };
+  }
+  if (position.unwound) {
+    return { tone: violet, icon: "check", title: "Trading on Kuru closed", body: "The market was unwound after the lock. What was left went back to the creator.", note: null };
+  }
+  if (offer !== null && canUnwind) {
+    return { tone: "var(--color-green)", icon: "arrow-up-right", title: "The lock is over", body: <><KuruLine offer={offer} sale={sale} price={price} /> Anyone can now close the market; what is left goes back to the creator.</>, note: null };
+  }
+  if (offer !== null) {
+    const until = new Date(Number(auction.seedLockUntil) * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return {
+      tone: "var(--color-green)", icon: "arrow-up-right",
+      title: offer === "none" ? "Too small for Kuru" : "Trading is live",
+      body: <KuruLine offer={offer} sale={sale} price={price} />,
+      note: `The starting pool stays on Kuru until ${until}. Nobody can pull it out before then.`,
+    };
+  }
+  if (reserved || waiting) {
+    return {
+      tone: "var(--color-cyan)", icon: "play",
+      title: reserved && !locked ? "Trading never started" : "Start trading on Kuru",
+      body: <>{setAside} are set aside to open trading at {price}.{kuruOnly ? "" : " Anyone can press this."}</>,
+      note: reserved && !locked ? "The lock is over, so they can also go back to the creator." : null,
+    };
+  }
+  if (auction.seedState === SEED.Released) {
+    return { tone: violet, icon: "return", title: "Trading never started", body: "What was set aside for Kuru went back to the creator.", note: null };
+  }
+  return { tone: violet, icon: "clock", title: "Trading on Kuru", body: <>{setAside} went to Kuru to open trading at {price}.</>, note: null };
+}
+
 function KuruCard({ auction, position, now, onDone }: { auction: AuctionView; position: Position; now: bigint; onDone: () => void }) {
   const { run, busy } = useRunner();
   const { sale, quote } = auction;
   const locked = now < auction.seedLockUntil;
   const reserved = auction.seedState === SEED.Reserved;
   const waiting = auction.seedState === SEED.HandedOff && position.accepted && !position.seeded && !position.unwound;
-  const live = position.seeded && !position.unwound;
+  const live = kuruOffer(position) !== null;
   const canUnwind = position.accepted && !position.unwound && !locked;
   const price = priceText(auction.clearingPrice, quote);
   const setAside = `${tokens(auction.seedSale, sale)} and ${money(auction.seedQuote, quote)}`;
@@ -255,45 +339,17 @@ function KuruCard({ auction, position, now, onDone }: { auction: AuctionView; po
   const [marketTried, setMarketTried] = useState(false);
   const marketText = marketInput.trim();
   const marketError = marketTried && !isAddress(marketText) ? "That isn't a market address. It starts with 0x and has 40 more letters and numbers." : null;
-
-  let tone = "var(--color-green)";
-  let icon: Parameters<typeof Icon>[0]["name"] = "arrow-up-right";
-  let title: string;
-  let body: ReactNode;
-  let note: ReactNode = null;
-  if (position.unwound) {
-    tone = "var(--color-violet)"; icon = "check";
-    title = "Trading on Kuru closed";
-    body = "The market was unwound after the lock. What was left went back to the creator.";
-  } else if (live && canUnwind) {
-    title = "The lock is over";
-    body = <>{sale.symbol} still trades on Kuru from {price}. Anyone can now close the market; what is left goes back to the creator.</>;
-  } else if (live) {
-    title = "Trading is live";
-    body = <>{sale.symbol} trades on Kuru from <span className="num font-bold">{price}</span></>;
-    note = `The starting pool stays on Kuru until ${new Date(Number(auction.seedLockUntil) * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}. Nobody can pull it out before then.`;
-  } else if (reserved || waiting) {
-    tone = "var(--color-cyan)"; icon = "play";
-    title = reserved && !locked ? "Trading never started" : "Start trading on Kuru";
-    body = <>{setAside} are set aside to open trading at {price}.{kuruOnly ? "" : " Anyone can press this."}</>;
-    if (reserved && !locked) note = "The lock is over, so they can also go back to the creator.";
-  } else if (auction.seedState === SEED.Released) {
-    tone = "var(--color-violet)"; icon = "return";
-    title = "Trading never started";
-    body = "What was set aside for Kuru went back to the creator.";
-  } else {
-    tone = "var(--color-violet)"; icon = "clock";
-    title = "Trading on Kuru";
-    body = <>{setAside} went to Kuru to open trading at {price}.</>;
-  }
+  const { tone, icon, title, body, note } = kuruStatus(auction, position, now, kuruOnly);
 
   const action = (label: string, done: string, fn: Parameters<typeof run>[1]) => () => void run(label, fn, done).then(onDone);
+  // With no tokens left to list (a sold-out launch), the market gets only the bid one tick below.
+  const liveToast = auction.seedSale > 0n ? `Trading is live on Kuru at ${price}.` : `Kuru now has a buy order one tick below ${price}.`;
   const submitMarket = (event: FormEvent) => {
     event.preventDefault();
     setMarketTried(true);
     if (!isAddress(marketText)) return;
     const market: Address = marketText;
-    action("Use this Kuru market", `Trading is live on Kuru at ${price}.`, (w) => seedIntoMarket(w, auction.id, market))();
+    action("Use this Kuru market", liveToast, (w) => seedIntoMarket(w, auction.id, market))();
   };
   return (
     <Panel className="res-strip mt-5">
@@ -308,7 +364,7 @@ function KuruCard({ auction, position, now, onDone }: { auction: AuctionView; po
         {live && network.kuruApp ? <span className="flex items-center gap-1 text-sm text-muted">Find it with {shortAddress(sale.address)}<CopyButton value={sale.address} /></span> : null}
         {live && !network.kuruApp ? <span className="flex items-center gap-1 text-sm text-muted">Test market {shortAddress(position.market)}<CopyButton value={position.market} /></span> : null}
         {notStarted && !kuruOnly ? (
-          <SecondaryButton icon="play" disabled={busy !== null} onClick={action("Start trading", `Trading is live on Kuru at ${price}.`, (w) => openMarket(w, auction.id))}>
+          <SecondaryButton icon="play" disabled={busy !== null} onClick={action("Start trading", liveToast, (w) => openMarket(w, auction.id))}>
             {busy === "Start trading" ? "Starting trading…" : "Start trading"}
           </SecondaryButton>
         ) : null}
@@ -345,11 +401,7 @@ function KuruCard({ auction, position, now, onDone }: { auction: AuctionView; po
             </button>
           </div>
           {marketError ? <div className="cr-error" role="alert"><Icon name="alert" size={16} className="mt-0.5" />{marketError}</div> : null}
-          <small id="kuru-market-help">
-            {kuruOnly
-              ? `On Monad mainnet only Kuru can create a new market. Once Kuru lists ${sale.symbol}, paste its market address here.`
-              : `Kuru already lists ${sale.symbol}? Paste its market address here instead.`}
-          </small>
+          <small id="kuru-market-help">{kuruMarketHelp(kuruOnly, sale, quote, price)}</small>
         </form>
       ) : null}
     </Panel>
@@ -385,7 +437,7 @@ const lootStyle: Record<LootKind, { word: string; fill: string; pop: string; pos
   burned: { word: "Burned", fill: "var(--color-coral)", pop: "var(--color-cyan)", pose: "error", soft: true },
 };
 
-function LootCard({ auction, loot, claimable, trading, onDone }: { auction: AuctionView; loot: Loot; claimable: readonly [bigint, bigint]; trading: boolean; onDone: () => void }) {
+function LootCard({ auction, loot, claimable, offer, onDone }: { auction: AuctionView; loot: Loot; claimable: readonly [bigint, bigint]; offer: KuruOffer | null; onDone: () => void }) {
   const { run, busy } = useRunner();
   const card = useRef<HTMLDivElement>(null);
   const { sale, quote } = auction;
@@ -418,7 +470,7 @@ function LootCard({ auction, loot, claimable, trading, onDone }: { auction: Auct
     fair: loot.tokens === 0n
       ? <>Lots of bids landed exactly on {price}. Shares round down, and yours came to less than one. All your money comes back.</>
       : <>Lots of bids landed exactly on {price}, so each got the same slice of what it asked for.</>,
-    missed: <>All your money comes back.{trading ? ` You can still buy ${sale.symbol} on Kuru.` : ""}</>,
+    missed: <>All your money comes back.{offer === "ask" || offer === "bid" ? <> <KuruLine offer={offer} sale={sale} price={price} /></> : null}</>,
     refund: null,
     burned: <>It gets burned; nobody gets it.</>,
   }[loot.kind];
@@ -567,7 +619,7 @@ function CreatorCard({ auction, onDone }: { auction: AuctionView; onDone: () => 
 
 /* ---------- right: someone who did not bid ---------- */
 
-function VisitorCard({ auction, signedIn, trading }: { auction: AuctionView; signedIn: boolean; trading: boolean }) {
+function VisitorCard({ auction, signedIn, offer }: { auction: AuctionView; signedIn: boolean; offer: KuruOffer | null }) {
   const { sale, quote } = auction;
   return (
     <div>
@@ -587,8 +639,8 @@ function VisitorCard({ auction, signedIn, trading }: { auction: AuctionView; sig
       <div className="res-hushrow">
         <span className="res-hush"><Hush pose={signedIn ? "idle" : "waiting"} size={120} className="bob" /></span>
         <Bubble className="res-after">
-          {trading
-            ? <>Didn't bid? <b>{sale.symbol}</b> trades on Kuru from <b>{priceText(auction.clearingPrice, quote)}.</b></>
+          {offer === "ask" || offer === "bid"
+            ? <>Didn't bid? <KuruLine offer={offer} sale={sale} price={priceText(auction.clearingPrice, quote)} /></>
             : <>Next time, lock a secret bid before bidding closes. Everyone who wins pays one price.</>}
         </Bubble>
       </div>
