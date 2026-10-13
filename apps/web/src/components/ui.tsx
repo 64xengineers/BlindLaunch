@@ -1,30 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { auctionAddress } from "../config";
-
-export function Logo({ className = "h-10 w-10" }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 64 64" aria-hidden="true">
-      <defs>
-        <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#8F8CF0" />
-          <stop offset="1" stopColor="#5EEAD4" />
-        </linearGradient>
-        <linearGradient id="body" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#5EEAD4" />
-          <stop offset="1" stopColor="#6360FF" />
-        </linearGradient>
-      </defs>
-      <circle cx="32" cy="32" r="30" fill="#16144F" stroke="url(#ring)" strokeWidth="2" />
-      <path d="M22 30 V24 a10 10 0 0 1 20 0 V30" fill="none" stroke="#F4F3FF" strokeWidth="3" strokeLinecap="round" />
-      <rect x="18" y="30" width="28" height="20" rx="4" fill="url(#body)" />
-      <rect x="22" y="35" width="16" height="2" fill="#0D0C3A" />
-      <rect x="22" y="40" width="12" height="2" fill="#0D0C3A" />
-      <rect x="22" y="45" width="8" height="2" fill="#0D0C3A" />
-      <rect x="31" y="33" width="2" height="14" fill="#FFC53D" />
-    </svg>
-  );
-}
+import { explorerUrl, network } from "../chain/config";
 
 export function LockIcon({ className = "h-4 w-4", open = false }: { className?: string; open?: boolean }) {
   return (
@@ -99,34 +75,6 @@ export function SecondaryButton({ children, to, href, onClick }: { children: Rea
   if (to) return <Link className={className} to={to}>{children}</Link>;
   if (href) return <a className={className} href={href} target="_blank" rel="noreferrer">{children}</a>;
   return <button type="button" className={className} onClick={onClick}>{children}</button>;
-}
-
-export function Field({
-  label,
-  value,
-  onChange,
-  type = "text",
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: string;
-  placeholder?: string;
-}) {
-  return (
-    <label className="grid gap-2 text-sm text-mist">
-      {label}
-      <input className="field" type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
-    </label>
-  );
-}
-
-export function formatLeft(seconds: number): string {
-  const left = Math.max(0, seconds);
-  return [Math.floor(left / 3600), Math.floor((left % 3600) / 60), left % 60]
-    .map((part) => String(part).padStart(2, "0"))
-    .join(":");
 }
 
 export function Countdown({ target, now }: { target: number; now: number }) {
@@ -412,9 +360,10 @@ export function Toast({ message, tone, onClose }: { message: string; tone: "ok" 
 }
 
 export function Footer() {
+  const contract = network.deployment ? explorerUrl("address", network.deployment.auction) : null;
   const links = [
-    ["Contract", `https://testnet.monadscan.com/address/${auctionAddress}`],
-    ["Faucet", "https://faucet.monad.xyz"],
+    ...(contract ? [["Contract", contract]] : []),
+    ...(network.faucet ? [["Faucet", network.faucet]] : []),
     ["Monad docs", "https://docs.monad.xyz"],
     ["Source", "https://github.com/64xengineers/BlindLaunch"],
     ["Get support", "https://github.com/64xengineers/BlindLaunch/issues"],
@@ -424,7 +373,7 @@ export function Footer() {
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-10 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2"><LockIcon className="h-5 w-5 text-amber" /><Wordmark /></div>
-          <p className="mt-2 max-w-sm text-sm text-lilac">Sealed-bid, one-price token launches on Monad testnet.</p>
+          <p className="mt-2 max-w-sm text-sm text-lilac">Sealed-bid, one-price token launches on {network.label}.</p>
         </div>
         <nav className="flex flex-wrap gap-x-6 gap-y-2" aria-label="Footer">
           <Link className="inline-flex min-h-11 items-center text-sm text-mist no-underline hover:text-amber" to="/docs">Integration docs</Link>
@@ -434,7 +383,7 @@ export function Footer() {
         </nav>
       </div>
       <p className="mx-auto max-w-6xl px-4 pb-8 text-xs text-lilac">
-        Testnet hackathon build. Not audited. Test tokens only. Not financial advice.
+        {network.name === "mainnet" ? "Not audited. Use small amounts." : "Test network build. Not audited. Test tokens only."} Not financial advice.
       </p>
     </footer>
   );

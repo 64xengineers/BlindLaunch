@@ -2,7 +2,7 @@ import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { blindAuctionV2Abi, keeperRegistryAbi, parseDeployment, type Deployment } from "@blindlaunch/abi";
+import { blindAuctionV2Abi, keeperRegistryAbi, marketSeederAbi, parseDeployment, type Deployment } from "@blindlaunch/abi";
 import { mulBase } from "@blindlaunch/sealed-bid";
 import { createPublicClient, createTestClient, createWalletClient, defineChain, erc20Abi, http, toHex, type Abi, type Address } from "viem";
 import { mnemonicToAccount, type HDAccount } from "viem/accounts";
@@ -15,6 +15,7 @@ import {
   createToken,
   ensureAllowance,
   mintTestQuote,
+  openMarket,
   openRemaining,
   placeBid,
   seedCall,
@@ -138,12 +139,14 @@ describe.skipIf(!hasFoundry)("web actions end to end on anvil (3.9)", () => {
     expect(await openRemaining(writer(accounts[5]!), id)).toBe(1);
     expect(publicActions(phaseOf(await auctionOf(id), await chainTime()))).toEqual(["settle"]);
     await callAuction(writer(accounts[6]!), "settle", id);
-    await callAuction(writer(accounts[8]!), "handOffSeed", id);
+    await openMarket(writer(accounts[8]!), id);
 
     const settled = await auctionOf(id);
     expect(settled.clearingPrice).toBe(2_500_000n);
     expect(settled.totalSold).toBe(750n);
     expect(settled.seedState).toBe(2);
+    const position = await publicClient.readContract({ address: deployment.seeder, abi: marketSeederAbi, functionName: "positionOf", args: [id] });
+    expect(position.seeded, "the Kuru (mock) market is open").toBe(true);
 
     for (const [bidder, , lots] of book) {
       const tokensBefore = await balance(token, bidder.address);

@@ -1,33 +1,45 @@
-import { ClearingSimulator, ComparisonSection, FaqSection, SectionHeading, StepsSection, TeamsCta } from "../components/sections";
-import { BotRaceDemo, CostsPanel, PrivacySection, RiskNotice } from "../components/trust";
-import { Badge, Reveal, SecondaryButton } from "../components/ui";
+import { FaqSection, StepsSection } from "../components/sections";
+import { PrivacySection, RiskNotice } from "../components/trust";
+import { GlassCard } from "../components/ui";
+
+const costs: [string, string][] = [
+  ["Deposit", "The same fixed amount for every bidder. What you do not spend comes back after settlement."],
+  ["Most you can pay", "Your highest price times how many you want. You usually pay less: the one price is often below your bid."],
+  ["Platform fee", "None. The contracts take no fee."],
+  ["Gas", "One transaction to bid (plus a one-time approval), one to claim. Opening and settling are done by keepers, or by anyone."],
+  ["If your bid does not match its own commitment", "Your deposit is forfeited to a burn address. The app checks every bid before sending it, so this only happens to bids crafted outside the app."],
+];
 
 export function HowItWorks() {
   return (
     <div className="mx-auto max-w-6xl px-4 pb-20">
-      <section className="rise max-w-3xl py-6">
-        <Badge>How it works</Badge>
-        <h1 className="mt-5 text-5xl font-bold leading-[0.95] tracking-[-0.04em] sm:text-6xl">A launch where speed does not win.</h1>
-        <p className="mt-5 max-w-xl text-lg leading-relaxed text-mist">
-          Everyone bids inside the same window. Nobody can read the bids until it closes. Then one price is found, and every winner pays it.
-        </p>
-        <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-          <a className="btn-primary inline-flex items-center justify-center no-underline" href="#simulator"><span className="relative z-10">Try the sandbox</span></a>
-          <SecondaryButton to="/">Browse auctions</SecondaryButton>
-        </div>
-      </section>
+      <h1 className="text-5xl font-bold tracking-[-0.04em]">How Blindlaunch works</h1>
+      <p className="mt-4 max-w-2xl text-lg text-mist">
+        A sealed-bid, one-price auction where bids open themselves. You act once, when you bid. Everything after that happens on chain.
+      </p>
       <StepsSection />
-      <div id="simulator" className="scroll-mt-6"><ClearingSimulator /></div>
-      <BotRaceDemo />
-      <ComparisonSection />
-      <PrivacySection />
-      <section className="mt-24">
-        <Reveal><SectionHeading eyebrow="Costs" title="Know what you pay before you bid." /></Reveal>
-        <Reveal className="mt-8"><CostsPanel /></Reveal>
+      <section className="mt-16 grid gap-6 lg:grid-cols-2">
+        <GlassCard>
+          <h2 className="text-lg font-bold">Why bids open themselves</h2>
+          <p className="mt-3 text-sm leading-relaxed text-mist">
+            Your app splits your bid into three shares and encrypts each to one keeper, so no single keeper can read it. After the deadline two keepers publish their keys. The contract checks every key, decrypts every bid, and only counts a bid that matches the commitment you sent. There is no reveal step, so nobody can wait, look at other bids, and then decide whether theirs counts.
+          </p>
+        </GlassCard>
+        <GlassCard>
+          <h2 className="text-lg font-bold">Costs</h2>
+          <dl className="mt-3 grid gap-3 text-sm">
+            {costs.map(([label, value]) => (
+              <div key={label} className="grid gap-1 border-b border-white/5 pb-3 last:border-0 sm:grid-cols-[11rem_1fr]">
+                <dt className="text-lilac">{label}</dt>
+                <dd className="text-paper">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </GlassCard>
       </section>
+      <PrivacySection />
       <FaqSection />
       <RiskNotice />
-      <TeamsCta />
     </div>
   );
 }

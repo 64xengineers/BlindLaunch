@@ -1,7 +1,6 @@
+import { allocationOf, settleOutcome, withPrefixes } from "@blindlaunch/sealed-bid";
 import { useState, type ReactNode } from "react";
-import { priceAt, type Auction, type Bid } from "../auction";
-import { allocate, demandByStep, findClearingStep } from "../clearing";
-import { auctionAddress, monadTestnet } from "../config";
+import { explorerUrl, network } from "../chain/config";
 import { CopyButton, GlassCard, Reveal, SecondaryButton, StepChart } from "./ui";
 
 export function SectionHeading({ eyebrow, title, copy }: { eyebrow: string; title: string; copy?: string }) {
@@ -15,10 +14,10 @@ export function SectionHeading({ eyebrow, title, copy }: { eyebrow: string; titl
 }
 
 const steps = [
-  ["01", "Seal your bid", "Pick the most you will pay and how many tokens you want. Only a scrambled commitment goes on chain, with a fixed deposit."],
+  ["01", "Seal your bid", "Pick the most you will pay and how many you want. Your bid is encrypted on your device to three independent keepers and sent in one transaction with a fixed deposit."],
   ["02", "Bidding closes", "The window ends for everyone at once. Sending first earns nothing, so there is no race."],
-  ["03", "Reveal and settle", "Bidders reveal. The contract finds the highest price where demand covers the supply."],
-  ["04", "Claim", "Winners claim tokens at that one price. Unused deposit comes back. The team collects proceeds."],
+  ["03", "Bids open themselves", "Two keepers publish their keys and the contract opens every bid on chain, then finds the highest price where demand covers the supply. You do nothing."],
+  ["04", "Claim and trade", "Winners claim tokens at that one price and unused deposit comes back. The token's Kuru market opens at the same price."],
 ];
 
 export function StepsSection() {
@@ -59,11 +58,15 @@ export function ClearingSimulator() {
     { id: 3, step: 2, quantity: 300 },
     { id: 4, step: 1, quantity: 200 },
   ]);
-  const demand = demandByStep(bids, SIM_STEPS);
-  const clearing = findClearingStep(demand, supply);
-  const fills = allocate(bids, demand, supply, clearing);
-  const price = SIM_MIN + clearing * SIM_STEP;
-  const sold = fills.reduce((sum, fill) => sum + fill, 0);
+  const opened = withPrefixes(bids.map((bid) => ({ counted: bid.quantity > 0, step: bid.step, quantity: BigInt(bid.quantity) })));
+  const perStep = Array.from({ length: SIM_STEPS }, () => 0n);
+  for (const bid of opened) if (bid.counted) perStep[bid.step] = (perStep[bid.step] ?? 0n) + bid.quantity;
+  const outcome = settleOutcome(perStep, BigInt(supply), { minPrice: BigInt(SIM_MIN), stepSize: BigInt(SIM_STEP), stepCount: SIM_STEPS });
+  const fills = opened.map((bid) => Number(allocationOf(bid, outcome)));
+  const clearing = outcome.clearingStep;
+  const price = Number(outcome.clearingPrice) || SIM_MIN;
+  const sold = Number(outcome.totalSold);
+  const demand = perStep.map((_, step) => Number(perStep.slice(step).reduce((sum, lots) => sum + lots, 0n)));
 
   function update(id: number, patch: Partial<SimBid>) {
     setBids((current) => current.map((bid) => (bid.id === id ? { ...bid, ...patch } : bid)));
@@ -90,8 +93,8 @@ export function ClearingSimulator() {
                 <div key={bid.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
                   <div className="flex items-center justify-between gap-2 text-sm">
                     <span className="font-semibold text-paper">Bidder {String.fromCharCode(65 + index)}</span>
-                    <span className={`font-mono text-xs ${fills[index] > 0 ? "text-teal" : "text-lilac"}`}>
-                      {fills[index] > 0 ? `gets ${fills[index]}, pays ${fills[index] * price}` : "not filled"}
+                    <span className={`font-mono text-xs ${(fills[index] ?? 0) > 0 ? "text-teal" : "text-lilac"}`}>
+                      {(fills[index] ?? 0) > 0 ? `gets ${fills[index]}, pays ${(fills[index] ?? 0) * price}` : "not filled"}
                     </span>
                   </div>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -148,9 +151,9 @@ export function ClearingSimulator() {
             </div>
             <div className="mt-4"><StepChart prices={simPrices} demand={demand} supply={supply} clearingIndex={clearing} /></div>
             <p className="mt-3 text-sm text-lilac">
-              {demand[0] < supply
+              {(demand[0] ?? 0) < supply
                 ? "Demand is below the supply, so every bid fills at the lowest price."
-                : "Bids above the price fill fully. Bids exactly at the price share what is left."}
+                : "Bids above the price fill fully. Bids exactly at the price share what is left, and every token is sold."}
             </p>
           </div>
         </div>
@@ -163,7 +166,7 @@ const rows: [string, string, string][] = [
   ["Who gets in", "Whoever lands first", "Everyone in the window"],
   ["Price paid", "Rises with every buyer", "One price for all winners"],
   ["Bots and snipers", "Front-run the crowd", "Speed earns nothing"],
-  ["Bids before close", "Visible in the mempool", "Scrambled commitments"],
+  ["Bids before close", "Visible in the mempool", "Encrypted to three keepers"],
   ["Unused money", "Spent on gas wars", "Deposit refunded"],
 ];
 
@@ -194,15 +197,17 @@ export function ComparisonSection() {
 }
 
 export function MonadSection() {
+  const auction = network.deployment?.auction ?? null;
   const facts: [string, ReactNode][] = [
-    ["Network", `${monadTestnet.name}, chain ${monadTestnet.id}`],
-    ["Gas token", "MON, from the faucet"],
-    ["Bid tokens", "Test tokens mint from this page"],
+    ["Network", `${network.label}, chain ${network.chain.id}`],
+    ["Gas token", network.faucet ? "MON, from the faucet" : "MON"],
+    ["Speed", "300 ms blocks and 600 ms finality, so a one-minute auction is practical"],
   ];
+  const link = auction ? explorerUrl("address", auction) : null;
   return (
     <section className="mt-24">
       <Reveal>
-        <SectionHeading eyebrow="Built on Monad" title="Every step is a real transaction." copy="Commit, reveal, settle and claim all run on the deployed contract. Anyone can check them on the explorer." />
+        <SectionHeading eyebrow="Built on Monad" title="Every step is a real transaction." copy="Bid, open, settle, market and claim all run on the deployed contracts. Anyone can check them on the explorer." />
       </Reveal>
       <div className="mt-8 grid gap-4 md:grid-cols-4">
         {facts.map(([label, value]) => (
@@ -216,12 +221,12 @@ export function MonadSection() {
         <Reveal>
           <GlassCard className="lift h-full">
             <div className="text-sm text-lilac">Auction contract</div>
-            <div className="mt-1 flex items-center justify-between gap-2">
-              <a className="break-all font-mono text-sm text-amber" href={`https://testnet.monadscan.com/address/${auctionAddress}`} target="_blank" rel="noreferrer">
-                {auctionAddress.slice(0, 10)}…{auctionAddress.slice(-6)}
-              </a>
-              <CopyButton value={auctionAddress} />
-            </div>
+            {auction ? (
+              <div className="mt-1 flex items-center justify-between gap-2">
+                {link ? <a className="break-all font-mono text-sm text-amber" href={link} target="_blank" rel="noreferrer">{auction.slice(0, 10)}…{auction.slice(-6)}</a> : <span className="break-all font-mono text-sm text-amber">{auction.slice(0, 10)}…{auction.slice(-6)}</span>}
+                <CopyButton value={auction} />
+              </div>
+            ) : <div className="mt-2 text-sm text-mist">Not deployed here yet</div>}
           </GlassCard>
         </Reveal>
       </div>
@@ -239,7 +244,7 @@ export function TeamsCta() {
             <div>
               <p className="text-sm font-medium text-teal">For teams</p>
               <h2 className="mt-2 text-3xl font-bold tracking-[-0.03em] sm:text-4xl">Launch your token at one fair price.</h2>
-              <p className="mt-3 text-mist">Set the supply, the lowest price and the close time. The contract handles the rest.</p>
+              <p className="mt-3 text-mist">Create your token or bring one, set a price ladder and a window. Bids open themselves, one price is found, and trading starts on Kuru at that price.</p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row md:justify-end">
               <SecondaryButton to="/create">Create an auction</SecondaryButton>
@@ -252,14 +257,14 @@ export function TeamsCta() {
 }
 
 const faqs = [
-  ["Can anyone see my bid before bidding closes?", "No. Only a hash of your price, quantity and a secret salt is stored on chain. The salt is built from a free signature by your wallet plus a private recovery code, so neither alone can open your bid, and it stays private until you reveal."],
-  ["What if I forget to reveal?", "An unrevealed bid is not filled. Your deposit is not lost: after settlement you can claim it back."],
+  ["Can anyone see my bid before bidding closes?", "No. Your bid is split into three shares, each encrypted to a different keeper, and only an encrypted bundle goes on chain. Reading it needs two keepers' keys, which they publish only after bidding closes. Two keepers working together could read bids early: that is the trust this design asks for, and keepers are run by different operators."],
+  ["Do I need to come back to reveal?", "No. There is no reveal step. After the deadline the contract opens every bid itself. Come back only to claim."],
   ["Why does everyone pay the same price?", "The contract finds the highest price where total demand covers the supply. Every winner pays that price, even if they bid higher."],
-  ["What happens if the auction is cancelled?", "If nobody settles before the cancel time, anyone can cancel. Every bidder can then claim the full deposit back."],
-  ["How do deposits and refunds work?", "Every bidder locks the same fixed deposit. After settlement you get your tokens plus the deposit minus what you paid. If you won nothing, the whole deposit comes back."],
-  ["What are the timeouts?", "Three deadlines: bidding closes, then a reveal window, then a settle window. If nobody settles by the last one, the auction can be cancelled and every deposit refunded."],
-  ["Are there any fees?", "The contract takes no fee. You only pay gas in MON for your own transactions."],
-  ["Do I need real money?", "No. This runs on Monad testnet. Get MON from the faucet for gas. The bid tokens are test tokens the page mints for you."],
+  ["What if the keepers never publish?", "If two keys are not out by the refund deadline, anyone can cancel the auction and every deposit is refunded in full."],
+  ["How do deposits and refunds work?", "Every bidder locks the same fixed deposit, so it reveals nothing. After settlement you get your tokens plus the deposit minus what you paid. If you won nothing, the whole deposit comes back."],
+  ["What is forfeiting?", "A bid that does not decrypt to the commitment its bidder sent loses its deposit to a burn address. This only happens to bids crafted outside the app; the app proves every bid opens correctly before sending it."],
+  ["What happens after the auction?", "If the team turned it on, a Kuru order book opens at the clearing price with some unsold tokens and part of the proceeds, so trading starts at the price the auction found."],
+  ["Are there any fees?", "The contracts take no fee. You only pay gas in MON for your own transactions."],
 ];
 
 export function FaqSection() {
@@ -293,51 +298,5 @@ export function FaqSection() {
         </div>
       </Reveal>
     </section>
-  );
-}
-
-export function auctionPhase(auction: Auction, now: number): number {
-  if (auction.status === 2) return 3;
-  if (now < auction.commitDeadline) return 0;
-  if (now < auction.revealDeadline) return 1;
-  return 2;
-}
-
-export function AuctionChart({ auction, bids }: { auction: Auction; bids: Bid[] }) {
-  const prices = Array.from({ length: auction.stepCount }, (_, step) => priceAt(auction, step).toString());
-  const counted = bids
-    .filter((bid) => bid.revealed && bid.counted)
-    .map((bid) => ({ step: bid.priceStep, quantity: Number(bid.quantity) }));
-  const demand = demandByStep(counted, auction.stepCount);
-  const supply = Number(auction.supply);
-  const clearingIndex = auction.status === 2
-    ? auction.clearingStep
-    : counted.length > 0 ? findClearingStep(demand, supply) : null;
-  return (
-    <StepChart
-      prices={prices}
-      demand={demand}
-      supply={supply}
-      clearingIndex={clearingIndex}
-      priceLabel={auction.status === 2 ? "One price" : "If settled now"}
-      empty="The curve appears when bids are revealed."
-    />
-  );
-}
-
-export function PhaseTimeline({ phase }: { phase: number }) {
-  const labels = ["Bidding", "Reveal", "Settle", "Claim"];
-  return (
-    <ol className="grid grid-cols-4 gap-2" aria-label="Auction phase">
-      {labels.map((label, index) => (
-        <li key={label} className="min-w-0">
-          <div className={`h-1.5 rounded-full transition-colors ${index < phase ? "bg-teal" : index === phase ? "bg-amber" : "bg-white/10"}`} />
-          <div className={`mt-2 truncate text-xs ${index === phase ? "font-semibold text-amber" : index < phase ? "text-teal" : "text-lilac"}`}>
-            {label}
-            {index === phase ? <span className="sr-only"> (current)</span> : null}
-          </div>
-        </li>
-      ))}
-    </ol>
   );
 }

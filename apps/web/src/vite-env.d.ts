@@ -1,11 +1,10 @@
 /// <reference types="vite/client" />
 
-interface EthereumProvider {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-  on?: (event: string, listener: (...args: unknown[]) => void) => void;
-  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+interface ImportMetaEnv {
+  readonly VITE_CHAIN?: "local" | "testnet" | "mainnet";
+  readonly VITE_RPC_URL?: string;
 }
 
 interface Window {
-  ethereum?: EthereumProvider;
+  ethereum?: import("viem").EIP1193Provider;
 }

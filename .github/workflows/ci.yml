@@ -36,7 +36,7 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  keeper-e2e:
+  e2e:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,3 +58,5 @@ jobs:
         run: pnpm --filter @blindlaunch/abi check
       - name: Keeper unit and anvil end-to-end tests
         run: pnpm --filter @blindlaunch/keeper test
+      - name: Web unit and anvil end-to-end tests
+        run: pnpm --filter @blindlaunch/web test

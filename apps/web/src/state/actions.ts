@@ -112,3 +112,11 @@ export function claimLeg(w: Writer, functionName: "claimRefund" | "claimTokens" 
 export function seedCall(w: Writer, functionName: "seed" | "unwind", auctionId: bigint) {
   return execute(w, w.deployment.seeder, marketSeederAbi as Abi, functionName, [auctionId]);
 }
+
+/** Hands the reserved seed to the seeder, then opens the Kuru market: two transactions, never one try/catch. */
+export async function openMarket(w: Writer, auctionId: bigint): Promise<void> {
+  const auction = await w.publicClient.readContract({ address: w.deployment.auction, abi: blindAuctionV2Abi, functionName: "getAuction", args: [auctionId] });
+  if (auction.seedState === 1) await callAuction(w, "handOffSeed", auctionId);
+  const position = await w.publicClient.readContract({ address: w.deployment.seeder, abi: marketSeederAbi, functionName: "positionOf", args: [auctionId] });
+  if (position.accepted && !position.seeded && !position.unwound) await seedCall(w, "seed", auctionId);
+}

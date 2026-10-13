@@ -54,6 +54,11 @@ export function createReads(client: Reader, deployment: Deployment) {
     );
   }
 
+  async function bid(id: bigint, slot: number): Promise<BidView> {
+    const raw = await client.readContract({ address: at, abi: blindAuctionV2Abi, functionName: "getBid", args: [id, slot] });
+    return { ...raw, slot };
+  }
+
   async function slotOf(id: bigint, account: Address): Promise<number | null> {
     const slotPlusOne = await client.readContract({ address: at, abi: blindAuctionV2Abi, functionName: "bidderSlot", args: [id, account] });
     return slotPlusOne === 0 ? null : slotPlusOne - 1;
@@ -87,7 +92,7 @@ export function createReads(client: Reader, deployment: Deployment) {
     return client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: "balanceOf", args: [account] });
   }
 
-  return { token, nextAuctionId, pageIds, auction, bids, slotOf, claimable, allocationOf, demand, keeperKeys, publishedKeys, position, balanceOf };
+  return { token, nextAuctionId, pageIds, auction, bids, bid, slotOf, claimable, allocationOf, demand, keeperKeys, publishedKeys, position, balanceOf };
 }
 
 export type Reads = ReturnType<typeof createReads>;
