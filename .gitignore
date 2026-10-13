@@ -15,12 +15,6 @@ coverage/
 id.json
 *-keypair.json
 
-# Solana / Anchor local artifacts
-target/
-.anchor/
-test-ledger/
-.yarn/
-
 # OS and editor
 .DS_Store
 *.log
