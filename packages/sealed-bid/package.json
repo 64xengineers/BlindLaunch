@@ -1,0 +1,24 @@
+{
+  "name": "@blindlaunch/sealed-bid",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "vectors": "tsx scripts/vectors.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "1.9.1",
+    "viem": "^2.37.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

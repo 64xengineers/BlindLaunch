@@ -1,0 +1,211 @@
+{
+  "count": 6,
+  "chainId": "0x7a69",
+  "contract": "0x00000000000000000000000000000000000b1d00",
+  "cases": [
+    {
+      "label": "pair01",
+      "bidder": "0x9ec500F1d831ECCaac2a77C2183dE734579F43ea",
+      "step": "0x3",
+      "quantity": "0xfa",
+      "m": "0x30000000000000000000000fa1a6e7b0b6878817fc58e4659f0acb467",
+      "pairA": "0x0",
+      "pairB": "0x1",
+      "secretKeys": [
+        "0xed33d8ceffe207c5430868802397234e630e14452957fe093096461a124f7fc1",
+        "0x7aec457b2ceb3a3163c8c93844516511dedd94e6b822a498a621f1dba370c988",
+        "0x30d679e10f8c0caf206470c00af76d839f8aff0f19ef07be329dcaf1c67bc726"
+      ],
+      "Rx": "0x67103c72219bcd2ff9919a16fac78ba706bfb00279efa2f4aead96519e247ca2",
+      "Ry": "0x2b815a3ecdc1fa296f1db912f5310ea2e35497ada270f1f43c72cb4aabedd70a",
+      "c": [
+        "0xb5cd856c7b88c89ec47f4bcac971414c2f2ea898e4f15b41e8611210b4059905",
+        "0x6cbc1d30eb9300948bdbed294504f9ecfb1ff02a76ded440a97505fa729dbc55",
+        "0xce1e234924970daa6e263efcbfc55870953a8939d187c9a9fc13a4d201708566"
+      ],
+      "h": "0xc4cabed1a6aebb9cc84176e2d72a739bc5f04c4d8304c881f4945b3e57398226",
+      "Sx": [
+        "0xb752f7418450901dc2e3b9382b59d492327a5b3014cc13a805d1e25933e42b8b",
+        "0x8821015a3ff426ab90cc3ccbc109196901ed8bd777c842d952d7340e0566e9cf",
+        "0x1d2943f372e7348a05215eab28c63ed4e4f7a4790c4e6e333396b5a1e8a89b7c"
+      ],
+      "Sy": [
+        "0xec47e8089f3042654f09ec1728394a45bbd3d442b658b2cf87a66aa7770b4b01",
+        "0x2276d1d002aa6847d103f02e16ce07806c1ce1918d6ade38835588d81671aba8",
+        "0x9dbf097d16a0cd83ee18bed7df4a0c1df838842756f12c3226eab2d5feee8c95"
+      ],
+      "counted": true,
+      "forfeited": false
+    },
+    {
+      "label": "pair02",
+      "bidder": "0x630311B90014025Dfc43D1B1DC6207d706a368Dd",
+      "step": "0x0",
+      "quantity": "0x1",
+      "m": "0x1be2b3b4f8ef7bbdf8de0e897a1b33653",
+      "pairA": "0x0",
+      "pairB": "0x2",
+      "secretKeys": [
+        "0xbc503b785753305a9b645243e253b1a80c4fc210d731a79caf01518f0777f173",
+        "0xc54d3069726126bec9a3399b5bb2002d4009f66ec9c6194fe7cb8008fe789944",
+        "0x3b946352ebdf2639ec1f9f953e6bea1dfcced26981d8eb31907cb6f6ba93d2d4"
+      ],
+      "Rx": "0x748d55c28bc816e22ac04e6af2ddd70d7cd43ecda78801b9e1f1ca28cd48af70",
+      "Ry": "0x3b60f7b6e2afb3841c87f764ae51f5e94631731e00e2ee9e44bbb223a98a77c5",
+      "c": [
+        "0x559e06aecb794c9b6cacddaabcf320ed6d1baffad23baaedc0d076de63561516",
+        "0x4fa0247978a5d715083f4d8b03226740413a8aebbef5043774c54514033a149e",
+        "0x45c89ffe6b7266f4eec5b49114f22864f0e84f476ae1165461c3c604953363bc"
+      ],
+      "h": "0xcd39b923c2eaba8d526d7682db80a3b23963c46c5b6ff35e2193f7246facd38e",
+      "Sx": [
+        "0xcb08ad1cb8ea38e91b84a2dd22a355f3ad9bbc848287203cd4abb232c85eaf91",
+        "0x925df50b709e3a01ff55da9f23e4b6fc574fd8d482b50141cdfe59d6ff2eef09",
+        "0x6760c463aa6b4bb06e6eb7fa46c664bd44ef9a95819ce95e74f6820a89733001"
+      ],
+      "Sy": [
+        "0xe7c9bf8d168ce343c01576654e71fa6a0579b0089441286cbf330d51e8722c0c",
+        "0xbf2c45ec45ffadf9d51dd887ee753c137b44ae9a06a3a99a6e207925b21e7695",
+        "0x87b72a6546d8bca14d2ba613d63ed681f31452a7cc86f4ebd3e21c872fe75cca"
+      ],
+      "counted": true,
+      "forfeited": false
+    },
+    {
+      "label": "pair12",
+      "bidder": "0x5669dD04eF516c558F27cBF5CfD5BB93b9D02d31",
+      "step": "0x3f",
+      "quantity": "0xf423f",
+      "m": "0x3f0000000000000000000f423fc245e3cf62d092645c6c49456c38adb4",
+      "pairA": "0x1",
+      "pairB": "0x2",
+      "secretKeys": [
+        "0x4b563bdfa6d71fb97401400d90fe91f16219e43d72fd7faebe28d1553da4c4f4",
+        "0xbf1c58ebd7b24ec8fce16f6cdedc2904309f3b8e798caf3e458abf5cbe837931",
+        "0x61423550a3bd53de3d8373e2b119a704b720a851a11140da4d44981d3b4d88cd"
+      ],
+      "Rx": "0x3d662da65c34499058d65a71440127c6bad49e2fa72d7a03189a89979430ee24",
+      "Ry": "0x3baac260f0133c3f37d151c0b44ae2bda2e4289570f8ba17ebed2331786ef342",
+      "c": [
+        "0x5c01b76c8257a5cd8fb788bc6042507d8fbff36bbca3ab535a35a151dd082071",
+        "0xe73f4c95723086bf6560c130fecdee63b51ab341078be846c047a211c0084fee",
+        "0xcfd03afd4c7c647aea60190e45ad8e450644d20af743fbee70a8100be173175c"
+      ],
+      "h": "0x83491f9826aecd06202ade1aa19fd3d9c1830de5c9c5df0e70fa95ff7018785e",
+      "Sx": [
+        "0xdee8d8127c26aed1472f1b22e64b30a19e4ec994fa644e65bed9691797b40721",
+        "0xc2d80f653e3c217ef12f22bfd36ca2f0e225ec850e03ab71dd7a0b73bf0a4e24",
+        "0x8b7accdbce56673f494fccd1ad3187d962d451511b1fd4aac5925b10e86d28fa"
+      ],
+      "Sy": [
+        "0x1629c04ccb9f8154e0b4cefaeeab44f3e446992d76db556c6f148c0239e7f270",
+        "0xc495bab503a51c605338ace1823f825e2a604a6f4948fe636719e3ee0142ba9f",
+        "0x1c90401d7ba7e3ad5475f750f8eadf85b6ffbba676ff9bb36ddbe31bddb2234"
+      ],
+      "counted": true,
+      "forfeited": false
+    },
+    {
+      "label": "stepOffLadder",
+      "bidder": "0xAA6B07370782f264c1FE897e992b7ce596a2CBd8",
+      "step": "0x40",
+      "quantity": "0x5",
+      "m": "0x40000000000000000000000005b0c6cd0d8fb9069e85054a7c96ffbd81",
+      "pairA": "0x0",
+      "pairB": "0x1",
+      "secretKeys": [
+        "0x8606f48b702b406bee96f4b14a60b1428a371f092f82fb6041562161438a5cff",
+        "0xed4e51a1522002caff7497e0cc0fced61ec5350110c4a648329364f8583d6ee3",
+        "0x37f18191f14b2765957dfb349709ae70abcf615add56134691c17611af323db6"
+      ],
+      "Rx": "0x5cc791e9205bb5cf10d3c412b8bbcaf0bf0afdf3a5513e5fe6acd4a87709d71c",
+      "Ry": "0x62d29a4b5ac553161a2225b248950b795aff16cb659edc30a949721bef5bcfe2",
+      "c": [
+        "0x9190ba4383681965481ad19ac9aa21ace5a59356cf5f96cf96b743f140a45915",
+        "0xe6ab7e386d4a79e5063c66a88bf4aabe48b724175cec376fd463ec4030cf178c",
+        "0x8c063ccd1cc2f2e1e99f4ab56de0a4fc6fb9abfec2d4406e9f64c654197086c9"
+      ],
+      "h": "0x994b15ffbb3924d69b9a2f61304aa194e08f52b62c58ebd2067072f39047fcec",
+      "Sx": [
+        "0x897eff2444342cf7a235e33717836a434e1f10e71eab385c5d2edd6db0ebd7f1",
+        "0x74296ad2f6109c5c77612cb4b52159c92e3355bf79e4b5339251ac82405563ff",
+        "0x705e8b863116cf61c284a51e892bb12e1652e774a2776ea7fe7e29bd5f09c0a0"
+      ],
+      "Sy": [
+        "0x619d27e925f40e0de599bb11ea66394482a044579c8d456876e5d4a55400482a",
+        "0xbb3692fcf00a682fc801b1c8212c49dd06643539ff271bc2d6d97bff84b87e9a",
+        "0xd4e779f5a09fc5ae339e5fbf60c9da38e6d1083e9e6007404efebe0baf8a33f0"
+      ],
+      "counted": false,
+      "forfeited": false
+    },
+    {
+      "label": "zeroQuantity",
+      "bidder": "0xd92FBB19Fe3b0401656FFCaAB778C0b3D7577321",
+      "step": "0x1",
+      "quantity": "0x0",
+      "m": "0x1000000000000000000000000f3c37ede7e6b03df807c184ba01f9fbd",
+      "pairA": "0x0",
+      "pairB": "0x2",
+      "secretKeys": [
+        "0x334732226c9ceb57acda39ee4d4ad05b475cf753e1816096ae9adbd7f0aa0870",
+        "0x4ebbad1466f98f12bb7d5d358213186eff907bbee8a76ae7cac36f46a16a629c",
+        "0xd8d4036947602433b0affd0f5a7280f872fd305c1ffe0409249fe288fc1b0fbf"
+      ],
+      "Rx": "0x584c15fa39fd057ec0c8dd554073e25e4d07442602e8ad28182ff06a8e02d9df",
+      "Ry": "0x5b5d97792416cbc5223f92a20c346a56b1d8e527ff4436c9b97b4591f4d3541f",
+      "c": [
+        "0x179db4e4108e934d7ba9d8f128e25179b57bed0bbd5a73a60cbbb315d1b5fab4",
+        "0x93bcbffb4dc6b704281b5d6909fd0425bf1a018516b53bfd035c15f7534873b6",
+        "0x502c4a9caf216a49259a81accb8fbaae93db782b203a5c4d410526bf63b493d0"
+      ],
+      "h": "0xb60e212c8e05a24a2734a2011c5c3580d12f7cdd6f3d225be72e3f284e9b7d82",
+      "Sx": [
+        "0x55168464fd0d380713f264e61c14661e2fa4716f94c93b9fe8ed4bbab4db1c49",
+        "0xfbd8d4cc6629102f79e639d92b863472ef2f2d55f2618339c495507adc105566",
+        "0x46ce1dcc23e2fa68b19e6b5769e329d2c6ea0f29bb7da120c7bc9a62b961bb65"
+      ],
+      "Sy": [
+        "0x402311abb8fc1f8d47c9712fc8bc923146801347c3cbcc7f1d53ae717beb292a",
+        "0x7d0794039c7ed73edae8a302cbbf2a4693aacbaf5bb668373e8071815daf6a3",
+        "0x2824afcd682fefc88d169b71faa7649455545b4bcae841bf884d321beb37c905"
+      ],
+      "counted": false,
+      "forfeited": false
+    },
+    {
+      "label": "corruptPair01",
+      "bidder": "0x542AeC1D68d462a5ee29655cc8f471B56F34D001",
+      "step": "0x2",
+      "quantity": "0xa",
+      "m": "0x200000000000000000000000aae1bac3827e89c3a8c6b55a5f2cfb6df",
+      "pairA": "0x0",
+      "pairB": "0x1",
+      "secretKeys": [
+        "0x815f143684a8ce1e7af3c52e9ee0438bbbb1522f2f92ea53c44c5cc9a8e68312",
+        "0xea7852697b49fa1b8ae312e4ec78187c68476b41f049ecfd98d97f866d2ded01",
+        "0xf5934e29bd8beb5b7f9b627102cbd6801b75eea66e3fc414c4a59135350ee856"
+      ],
+      "Rx": "0xbb3502ab9d512772955dd464740f78c1389921ac65da68f2179a19100d6a3706",
+      "Ry": "0xf1bbb19c5948dc0e34da468073b397c84d98657c81241068d96fa62e876ae978",
+      "c": [
+        "0x6af7903a5f37ffdb73f873e4fbb95e9fde1d87d04d8002aef85a6b290fe0f181",
+        "0x23b358dcf701855ca1462a74b8df628a4cdb6da4864a607702e5f95b22f86f8d",
+        "0x684aefda3faa58a0bea8be9cc3f6799b7428d72d0de5959f1dcf745177b1244c"
+      ],
+      "h": "0x9a1ba53ebf97f74c70a61778b9cb8c1ba1b7f31765db4f638d1728e54f32b745",
+      "Sx": [
+        "0xec27a194f97586131265788b10b8506b679ce87ab3ee7055fe9a21bc7b9164fe",
+        "0xb1def5f9ddfe7af509d432fcea624da5c2f20ec3caacf7c16f8b1ece63617ae0",
+        "0xf20c95b698fc9defeea3848fc26ad8ee19e79179385c1bd61c56e8a4beb3674b"
+      ],
+      "Sy": [
+        "0xea694418d8c4f908f1ab389dd0ed8e0097609d21dbe8440131e3391b374a097b",
+        "0xaa86c96be41017f6a847c2b51a2aa340a032085447c3f9b7eb2cd72e52886f61",
+        "0xfa508da3239e623d48738ad715f8b6447d8015a73fa3dec1105b2ee7a908ae41"
+      ],
+      "counted": false,
+      "forfeited": true
+    }
+  ]
+}

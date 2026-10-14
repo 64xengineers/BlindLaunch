@@ -15,12 +15,15 @@ coverage/
 id.json
 *-keypair.json
 
-# Solana / Anchor local artifacts
-target/
-.anchor/
-test-ledger/
-.yarn/
-
 # OS and editor
 .DS_Store
 *.log
+
+# Local anvil deployments
+deployments/31337.json
+
+# Keeper secrets
+apps/keeper/*.env
+apps/keeper/*.keys.json
+apps/keeper/*.keys.json.tmp
+apps/keeper/*.tmp

@@ -1,128 +1,86 @@
-import { auctionAddress, monadTestnet, quoteTokenAddress, saleTokenAddress } from "../config";
-import { Badge, CopyButton, GlassCard } from "../components/ui";
+import type { CSSProperties, ReactNode } from "react";
+import { network } from "../chain/config";
+import type { IconName } from "../components/art";
+import { CopyButton, Icon } from "../components/ui";
 
-const commitSnippet = `import { createPublicClient, createWalletClient, custom, http,
-  encodeAbiParameters, keccak256, toHex } from "viem";
-
-const salt = toHex(crypto.getRandomValues(new Uint8Array(32)));
-// Keep the salt. Without it the bid cannot be revealed.
-
-const commitment = keccak256(encodeAbiParameters(
-  [{ type: "uint256" }, { type: "address" }, { type: "uint32" },
-   { type: "uint256" }, { type: "bytes32" }],
-  [auctionId, bidder, priceStep, quantity, salt],
-));
-
-// 1. approve(BlindAuction, deposit) on the quote token
-// 2. commit before commitDeadline
-await wallet.writeContract({
-  address: "${auctionAddress}",
-  abi, functionName: "commit", args: [auctionId, commitment],
-});`;
-
-const revealSnippet = `// Between commitDeadline and revealDeadline
-await wallet.writeContract({
-  address: "${auctionAddress}",
-  abi, functionName: "reveal",
-  args: [auctionId, priceStep, quantity, salt],
-});
-
-// After revealDeadline, anyone can settle; then each bidder claims
-await wallet.writeContract({ address, abi, functionName: "settle", args: [auctionId] });
-await wallet.writeContract({ address, abi, functionName: "claim", args: [auctionId] });`;
-
-const functions: [string, string][] = [
-  ["createAuction(CreateParams)", "Escrows the sale supply and sets the price grid, deposit and three deadlines."],
-  ["commit(id, commitment)", "Locks the fixed deposit and stores the hash. One bid per wallet. Before commitDeadline."],
-  ["reveal(id, priceStep, quantity, salt)", "Opens the bid. Between commitDeadline and revealDeadline."],
-  ["settle(id)", "Anyone. Finds the clearing step and allocations. Between revealDeadline and cancelAfter."],
-  ["cancel(id)", "Anyone, at or after cancelAfter if still open. Every deposit becomes refundable."],
-  ["claim(id)", "Bidder receives allocated tokens plus unused deposit."],
-  ["reclaim(id)", "Authority receives proceeds plus unsold tokens."],
-  ["getAuction(id) / getBid(id, slot)", "Read state. bidderSlot(id, wallet) returns slot + 1, or 0 if no bid."],
-  ["claimable(id, wallet)", "Tokens and refund a bidder would receive right now."],
-  ["hashBid(id, bidder, step, qty, salt)", "Same commitment the contract checks, handy for testing."],
+const calls = [
+  ["Create", "KeeperRegistry must have a fresh key in each keeper queue. Approve the supply, then createAuction(params). The auction id is in the AuctionCreated event."],
+  ["Bid", "Read keeperKeysOf(id). Seal with @blindlaunch/sealed-bid: seal({ chainId, contract, auctionId, bidder, step, quantity, keeperKeys }). Approve the deposit, then commit(id, R, c, h)."],
+  ["Open", "After commitDeadline two keepers call publishKey. Anyone then calls openMany(id, slots, sharedA, sharedB) with sharedPoint(publishedKey, R) for the frozen pair."],
+  ["Settle", "When every bid is open, anyone calls settle(id). It reads storage only."],
+  ["Market", "If seeding is on, anyone calls handOffSeed(id), which only hands the reserved seed to MarketSeeder. Anyone then calls MarketSeeder.seed(id) to open the Kuru market at the clearing price. Where only Kuru may create markets, as on Monad mainnet, call MarketSeeder.seedInto(id, market) instead, with an existing market that Kuru's Router verifies for the same tokens. Anyone may use a market whose settings match the launch's declared Kuru settings exactly; a market with other settings can only be used by the creator. Seeding closes when the lock ends. After the lock, anyone calls MarketSeeder.unwind(id) to pay the creator."],
+  ["Claim", "Bidders call claim(id), or claimRefund / claimTokens for one leg. The creator calls reclaim(id), or reclaimUnsold / reclaimProceeds."],
+  ["Cancel", "If two keys are not published by cancelAfter, anyone calls cancel(id) and every deposit is refunded."],
 ];
 
-const events = [
-  "AuctionCreated(auctionId, authority, saleToken, quoteToken, supply, …)",
-  "BidCommitted(auctionId, bidder, slot, commitment)",
-  "BidRevealed(auctionId, bidder, priceStep, quantity, counted)",
-  "AuctionSettled(auctionId, clearingPrice, clearingStep, totalSold)",
-  "AuctionCancelled(auctionId)",
-  "BidClaimed(auctionId, bidder, saleTokens, quoteRefund)",
-  "ProceedsReclaimed(auctionId, authority, unsold, proceeds)",
-];
+/** Wraps call names like createAuction(params) in code style so the steps scan quickly. */
+function codeify(text: string): ReactNode[] {
+  return text.split(/(\b[\w.@/-]+\([^)]*\))/g).map((part, index) => (index % 2 === 1 ? <code key={index}>{part}</code> : part));
+}
 
-function Code({ code }: { code: string }) {
+function DocPanel({ icon, colour, title, children }: { icon: IconName; colour: string; title: ReactNode; children: ReactNode }) {
   return (
-    <div className="relative mt-3">
-      <pre className="overflow-x-auto rounded-xl border border-white/10 bg-ink/80 p-4 font-mono text-xs leading-relaxed text-mist"><code>{code}</code></pre>
-      <div className="absolute right-2 top-1"><CopyButton value={code} /></div>
-    </div>
+    <section className="panel hm-doc" style={{ "--c": colour } as CSSProperties}>
+      <h2><span className="ic-box"><Icon name={icon} size={20} /></span>{title}</h2>
+      {children}
+    </section>
   );
 }
 
 export function Docs() {
-  const addresses: [string, string][] = [
-    ["BlindAuction", auctionAddress],
-    ["SALE test token", saleTokenAddress],
-    ["QUOTE test token", quoteTokenAddress],
-  ];
+  const d = network.deployment;
+  const addresses: [string, string][] = d
+    ? [["BlindAuctionV2", d.auction], ["KeeperRegistry", d.registry], ["MarketSeeder", d.seeder], ["TokenFactory", d.factory], ["Payment token", d.quote]]
+    : [];
   return (
-    <div className="mx-auto max-w-4xl px-4 pb-20">
-      <Badge>Integration docs</Badge>
-      <h1 className="mt-5 text-4xl font-bold tracking-[-0.04em] sm:text-5xl">Use Blindlaunch from your launchpad.</h1>
-      <p className="mt-3 text-mist">
-        Any frontend can run a sealed-bid, one-price sale by calling the contract directly. There is no API server. Everything below works against {monadTestnet.name} (chain {monadTestnet.id}).
-      </p>
+    <div className="hm-wrap is-narrow">
+      <header className="hm-page-head rise">
+        <div>
+          <span className="label !text-cyan">For builders</span>
+          <h1 className="hm-h1 mt-2">Integration docs</h1>
+          <p className="hm-sub">Everything a launchpad, wallet or bot needs to use Blindlaunch auctions directly.</p>
+        </div>
+      </header>
 
-      <GlassCard className="mt-8">
-        <h2 className="text-lg font-bold">Addresses</h2>
-        <ul className="mt-3 grid gap-2">
+      <DocPanel icon="flag" colour="var(--color-cyan)" title={<>{network.label} <span className="num text-[17px] text-muted">chain {network.chain.id}</span></>}>
+        {addresses.length === 0 ? <p className="m-0 mt-3 text-muted">Not deployed on this network yet.</p> : null}
+        <ul className="hm-addr">
           {addresses.map(([label, address]) => (
-            <li key={label} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl bg-white/[0.04] px-3">
-              <span className="text-sm text-lilac">{label}</span>
-              <span className="flex min-w-0 max-w-full flex-1 items-center justify-end gap-1">
-                <a className="truncate font-mono text-xs text-paper hover:text-amber" href={`https://testnet.monadscan.com/address/${address}`} target="_blank" rel="noreferrer">{address}</a>
-                <CopyButton value={address} />
-              </span>
+            <li key={label}>
+              <span className="who">{label}</span>
+              <span className="flex min-w-0 items-center gap-1"><code>{address}</code><CopyButton value={address} /></span>
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-xs text-lilac">RPC https://testnet-rpc.monad.xyz · test tokens have 0 decimals and a public mint, for demos only.</p>
-      </GlassCard>
+      </DocPanel>
 
-      <GlassCard className="mt-6">
-        <h2 className="text-lg font-bold">1. Seal a bid</h2>
-        <p className="mt-2 text-sm text-mist">The commitment is the keccak256 of the ABI-encoded auction id, bidder, price step, quantity and a random 32-byte salt. The price paid at step <span className="font-mono">s</span> is <span className="font-mono">minPrice + s × stepSize</span>.</p>
-        <Code code={commitSnippet} />
-      </GlassCard>
+      <DocPanel icon="lock" colour="var(--color-yellow)" title="Bid format">
+        <pre className="hm-code">{`m = step << 224 | quantity << 128 | nonce        // nonce: 128 random bits
+h = keccak256(abi.encode(chainid, auction, auctionId, bidder, m))
+shares y_i = m + a·(i+1) mod n                    // Shamir 2-of-3, n = secp256k1 order
+R = r·G,  c_i = y_i XOR keccak256(abi.encodePacked(r·P_i, uint8(i)))
+commit(auctionId, R, [c_0, c_1, c_2], h)`}</pre>
+        <p className="m-0 mt-4 flex items-start gap-3 text-muted">
+          <Icon name="alert" size={20} className="mt-0.5 text-coral" />
+          <span>
+            A bid whose decryption does not match h is forfeited. Before sending, call{" "}
+            <code>{"verifySealed(sealed, keeperKeys, { chainId, contract, auctionId, bidder })"}</code> with the wallet that sends commit as
+            bidder. It opens the bid under all three keeper pairs and recomputes h for that chain, contract, auction and bidder. Without the
+            last argument it does not check h.
+          </span>
+        </p>
+      </DocPanel>
 
-      <GlassCard className="mt-6">
-        <h2 className="text-lg font-bold">2. Reveal, settle, claim</h2>
-        <Code code={revealSnippet} />
-      </GlassCard>
-
-      <GlassCard className="mt-6">
-        <h2 className="text-lg font-bold">Functions</h2>
-        <dl className="mt-3 grid gap-3">
-          {functions.map(([name, copy]) => (
-            <div key={name} className="grid gap-1 border-b border-white/5 pb-3 last:border-0 sm:grid-cols-[17rem_1fr]">
-              <dt className="break-words font-mono text-xs text-amber">{name}</dt>
-              <dd className="text-sm text-mist">{copy}</dd>
-            </div>
+      <DocPanel icon="chevron-right" colour="var(--color-green)" title="Call sequence">
+        <ol className="hm-calls">
+          {calls.map(([label, text]) => (
+            <li key={label}>
+              <b>{label}</b>
+              <span>{codeify(text!)}</span>
+            </li>
           ))}
-        </dl>
-      </GlassCard>
-
-      <GlassCard className="mt-6">
-        <h2 className="text-lg font-bold">Events to index</h2>
-        <ul className="mt-3 grid gap-2">
-          {events.map((event) => <li key={event} className="break-words font-mono text-xs text-mist">{event}</li>)}
-        </ul>
-        <p className="mt-3 text-sm text-mist">Full source and tests: <a className="text-amber" href="https://github.com/64xengineers/BlindLaunch/tree/added-readme.md/contracts" target="_blank" rel="noreferrer">contracts on GitHub</a>.</p>
-      </GlassCard>
+        </ol>
+      </DocPanel>
     </div>
   );
 }
